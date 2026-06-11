@@ -8,33 +8,35 @@ vanishes:
     Tm = ΔH / ΔS         (concentration-independent, unlike a duplex)
 
 Strider's folding model (``structure.mfe`` / ``thermo.ensemble``) is built on
-ΔG₃₇-only stack parameters, so on its own it has no enthalpy and its partition
-function never melts.  This module supplies the missing enthalpy without any new
-parameter tables, using two facts about the SantaLucia/Mathews-Turner DNA set:
+ΔG₃₇ stack/loop parameters, so on its own it has no enthalpy and its partition
+function never melts.  We recover a consistent enthalpy from the native DNA
+parameter set, which now carries real loop ΔH tables (stack ΔH plus
+mismatch / triloop / tetraloop ΔH; loop *initiation* ΔH is purely entropic and
+set to zero — see :func:`strider.thermo.parameters_native.build_native_paramset`).
 
-  * Stack enthalpies already live in ``nn_dna.DNA_NN`` (ΔH, ΔS, ΔG₃₇).
-  * Hairpin/internal loop penalties are *purely entropic* in this set
-    (ΔH = 0; verified against the published loop tables — a size-3 loop is
-    ΔH=0, ΔS=−11.3 cal/mol·K, i.e. ΔG₃₇ = +3.5).
-
-So for a predicted hairpin we take the structure's own (well-calibrated) ΔG₃₇,
-add up the stem-stack ΔH from ``DNA_NN``, and recover a consistent entropy:
+ΔG and ΔH are obtained from the *same* structure walk
+(:func:`strider.thermo.structure_thermo.structure_free_energy` /
+:func:`~strider.thermo.structure_thermo.structure_enthalpy`), so the derived
 
     ΔS = (ΔH − ΔG₃₇) / T_ref
 
-from which both Tm and ΔG(T) follow.  This reproduces independent reference
-engines (e.g. seqfold) to <1 °C at 1 M Na⁺.
+is exact at the table reference temperature.  This reproduces independent
+reference engines (e.g. seqfold) to <1 °C at 1 M Na⁺, and — unlike a stack-only
+ΔH sum — it also counts the loop-closing terminal-mismatch enthalpy, which
+matters for GC-rich stems.
 
 Caveats
 -------
-* Two-state, single-hairpin only (one stem + one loop).  Multiloops / bulges
-  raise ``ValueError`` — use the full ensemble for those.
+* Single, unbranched hairpin only (one stem, optionally with bulges/internal
+  loops, plus one hairpin loop).  Multiloops / pseudoknots raise ``ValueError``
+  — use the full ensemble for those.
 * Tm is *hypersensitive* to the ΔH/ΔS bookkeeping: a ~few-% shift in either
   moves Tm by tens of °C.  Treat absolute Tm as calibratable, not exact, and
   anchor it against experimental (e.g. qPCR) melts.
-* Salt/Mg²⁺ enters through the per-base-pair ΔG model (``salt.dg_per_bp_salt``),
-  folded into the closed-state ΔG before ΔS is derived — the same correction the
-  ensemble DP uses, not the (oversized, duplex-calibrated) Owczarzy Tm shift.
+* Salt/Mg²⁺ enters through the per-base-pair ΔG model
+  (:func:`strider.thermo.salt.dg_per_bp_salt`), folded into the closed-state ΔG
+  before ΔS is derived — the same correction the ensemble DP uses, not the
+  (oversized, duplex-calibrated) Owczarzy Tm shift.
 """
 
 from __future__ import annotations
@@ -61,7 +63,7 @@ def hairpin_thermo(
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
     material: str = "dna",
-    structure: list[tuple[int, int]] | None = None,
+    structure: list[tuple[int, int]] | str | None = None,
 ) -> HairpinThermo:
     """
     Two-state thermodynamics (Tm, ΔH, ΔS, ΔG₃₇) for a hairpin.
@@ -70,38 +72,39 @@ def hairpin_thermo(
     ----------
     seq : strand sequence.
     sodium_M, magnesium_M : ion concentrations (1 M Na⁺ / 0 Mg²⁺ = reference).
-    structure : optional list of ``(i, j)`` base pairs; if omitted the MFE
-        hairpin is predicted with :func:`strider.structure.mfe.fold_mfe`.
+    structure : optional structure to score; either a list of ``(i, j)`` base
+        pairs or a dot-bracket string.  If omitted the MFE hairpin is predicted
+        with :func:`strider.structure.mfe.fold_mfe`.
 
     Raises
     ------
-    ValueError : if the structure is not a single simple hairpin.
+    ValueError : if the structure has no base pairs or is not a single
+        unbranched hairpin (e.g. a multiloop).
     """
     from strider.structure.mfe import fold_mfe
-    from strider.thermo.nn_dna import DNA_NN, reverse_complement
     from strider.thermo.salt import dg_per_bp_salt
+    from strider.thermo.structure_thermo import (
+        parse_hairpin_pairs,
+        structure_enthalpy,
+        structure_free_energy,
+    )
 
     seq = seq.upper().replace("U", "T")
 
     if structure is None:
-        struct_str, dG37_1M, pairs = fold_mfe(seq, 37.0, material)
+        struct_str, _, _ = fold_mfe(seq, 37.0, material)
+    elif isinstance(structure, str):
+        struct_str = structure
     else:
-        pairs = sorted(structure)
-        struct_str = _dotbracket(seq, pairs)
-        dG37_1M = _structure_dg37(seq, pairs, material)
+        struct_str = _dotbracket(seq, sorted(structure))
 
-    if not pairs:
-        raise ValueError("sequence has no predicted base pairs — not a hairpin")
-    _assert_simple_hairpin(pairs)
+    pairs = parse_hairpin_pairs(struct_str)
+    if pairs is None:
+        raise ValueError("structure is not a single unbranched hairpin")
 
-    pairset = set(pairs)
-    dH = 0.0
-    for (i, j) in pairs:
-        if (i + 1, j - 1) in pairset:           # stacked NN step
-            dinuc = seq[i:i + 2]
-            entry = DNA_NN.get(dinuc) or DNA_NN.get(reverse_complement(dinuc))
-            if entry is not None:
-                dH += entry[0]
+    # ΔG and ΔH from the same per-element walk → a consistent ΔS at T_ref.
+    dG37_1M = structure_free_energy(seq, struct_str, material)
+    dH = structure_enthalpy(seq, struct_str, material)
 
     # Fold salt into the closed-state ΔG₃₇ (per closed base pair), then derive ΔS.
     dG37 = dG37_1M + len(pairs) * dg_per_bp_salt(sodium_M, magnesium_M)
@@ -149,36 +152,8 @@ def fraction_folded(
 
 # ─── internals ────────────────────────────────────────────────────────────────
 
-def _assert_simple_hairpin(pairs: list[tuple[int, int]]) -> None:
-    """Reject anything that isn't one nested, contiguous stem (no multiloop/bulge)."""
-    pairs = sorted(pairs)
-    pairset = set(pairs)
-    # Exactly one pair must be unstacked on its inner side (the loop-closing pair),
-    # and pairs must be strictly nested.
-    for k in range(len(pairs) - 1):
-        i, j = pairs[k]
-        ni, nj = pairs[k + 1]
-        if not (ni > i and nj < j):
-            raise ValueError("structure is not a single nested hairpin stem")
-        if ni != i + 1 or nj != j - 1:
-            raise ValueError("stem has a bulge/internal loop — use the full ensemble")
-
-
 def _dotbracket(seq: str, pairs: list[tuple[int, int]]) -> str:
     s = ["."] * len(seq)
     for i, j in pairs:
         s[i], s[j] = "(", ")"
     return "".join(s)
-
-
-def _structure_dg37(seq: str, pairs: list[tuple[int, int]], material: str) -> float:
-    """ΔG₃₇ (1 M) of a given simple hairpin: stem stacks + hairpin loop."""
-    from strider.thermo.ensemble import _stack_energy, _hairpin_loop_energy
-    pairset = set(pairs)
-    dG = 0.0
-    for (i, j) in pairs:
-        if (i + 1, j - 1) in pairset:
-            dG += _stack_energy(seq, i, j, material)
-    inner_i, inner_j = max(pairs, key=lambda p: p[0])
-    dG += _hairpin_loop_energy(seq, inner_i, inner_j, material, T_REF)
-    return dG
