@@ -78,6 +78,88 @@ def dg_per_bp_salt(sodium_M: float, magnesium_M: float = 0.0) -> float:
     return -0.114 * math.log(effective_na)
 
 
+# Tan & Chen empirical helix salt model is fit for stems of 6–15 bp.
+TAN_CHEN_MIN_BP = 6
+TAN_CHEN_MAX_BP = 15
+
+
+def tan_chen_helix_dg(
+    n_pairs: int,
+    sodium_M: float,
+    magnesium_M: float = 0.0,
+    material: str = "dna",
+) -> float:
+    """
+    Whole-helix electrostatic salt correction ΔG (kcal/mol) relative to 1 M NaCl,
+    from the tightly-bound-ion (TBI) theory of Tan & Chen (2007) Biophys. J.
+    92:3615–3632 (DNA Eqs. 26/29/30, RNA Eqs. 16/20, mixing Eqs. 24/25).
+
+    Unlike :func:`dg_per_bp_salt` (a *per-base-pair* correction for the McCaskill
+    DP), this is a *per-helix* quantity: it needs the stem length ``n_pairs`` (N),
+    sums the per-base-stack free energy over the N−1 stacks, and adds the
+    Na⁺/Mg²⁺ interference cross-term Δg₁₂.  Use it for the two-state hairpin Tm,
+    where N is known.
+
+    The mean electrostatic folding free energy per base stack is
+
+        Δg₁ = a₁ + b₁/N                          (Na⁺,  Eq. 29 DNA / 16 RNA)
+        Δg₂ = a₂ + b₂/N²                         (Mg²⁺, Eq. 30 DNA / 20 RNA)
+
+    with (DNA) a₁=−0.07·ln[Na⁺]+0.012·ln²[Na⁺], b₁=0.013·ln²[Na⁺],
+    a₂=0.02·ln[Mg²⁺]+0.0068·ln²[Mg²⁺], b₂=1.18·ln[Mg²⁺]+0.344·ln²[Mg²⁺].
+    Mixed solutions combine the two by fractional weights (Eq. 24)
+
+        x₁ = [Na⁺] / ([Na⁺] + (8.1 − 32.4/N)(5.2 − ln[Na⁺])[Mg²⁺]),  x₂ = 1 − x₁
+
+    plus the cross-term (Eq. 25)
+
+        Δg₁₂ = −0.6·x₁·x₂·ln[Na⁺]·ln((1/x₁ − 1)[Na⁺]) / N
+
+    so the total correction is  (N−1)(x₁Δg₁ + x₂Δg₂) + Δg₁₂.  At 1 M Na⁺/0 Mg²⁺
+    every term vanishes (correction = 0), matching the reference state.
+
+    Raises ``ValueError`` for N < ``TAN_CHEN_MIN_BP`` (outside the fitted range,
+    where the (8.1 − 32.4/N) factor degenerates) or unknown ``material``.
+    """
+    N = int(n_pairs)
+    if N < TAN_CHEN_MIN_BP:
+        raise ValueError(
+            f"Tan-Chen helix salt model is fit for stems ≥ {TAN_CHEN_MIN_BP} bp; "
+            f"got N={N}. Use the per-base-pair model for short stems."
+        )
+    mat = material.lower()
+    if mat not in ("dna", "rna"):
+        raise ValueError("material must be 'dna' or 'rna'")
+
+    lnNa = math.log(sodium_M) if sodium_M > 0 else 0.0
+    if mat == "dna":
+        a1 = -0.07 * lnNa + 0.012 * lnNa ** 2
+        b1 = 0.013 * lnNa ** 2
+    else:
+        a1 = -0.075 * lnNa + 0.012 * lnNa ** 2
+        b1 = 0.018 * lnNa ** 2
+    dg1 = a1 + b1 / N
+    if magnesium_M <= 0:
+        return (N - 1) * dg1
+
+    lnMg = math.log(magnesium_M)
+    if mat == "dna":
+        a2 = 0.02 * lnMg + 0.0068 * lnMg ** 2
+        b2 = 1.18 * lnMg + 0.344 * lnMg ** 2
+    else:
+        a2 = -0.6 / N + 0.025 * lnMg + 0.0068 * lnMg ** 2
+        b2 = lnMg + 0.38 * lnMg ** 2
+    dg2 = a2 + b2 / N ** 2
+    if sodium_M <= 0:
+        return (N - 1) * dg2
+
+    x1 = sodium_M / (sodium_M + (8.1 - 32.4 / N) * (5.2 - lnNa) * magnesium_M)
+    x2 = 1.0 - x1
+    arg = (1.0 / x1 - 1.0) * sodium_M
+    dg12 = -0.6 * x1 * x2 * lnNa * math.log(arg) / N if arg > 0 else 0.0
+    return (N - 1) * (x1 * dg1 + x2 * dg2) + dg12
+
+
 # ─── private ─────────────────────────────────────────────────────────────────
 
 def _fgc(seq: str) -> float:

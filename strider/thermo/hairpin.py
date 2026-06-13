@@ -33,10 +33,14 @@ Caveats
 * Tm is *hypersensitive* to the ΔH/ΔS bookkeeping: a ~few-% shift in either
   moves Tm by tens of °C.  Treat absolute Tm as calibratable, not exact, and
   anchor it against experimental (e.g. qPCR) melts.
-* Salt/Mg²⁺ enters through the per-base-pair ΔG model
-  (:func:`strider.thermo.salt.dg_per_bp_salt`), folded into the closed-state ΔG
-  before ΔS is derived — the same correction the ensemble DP uses, not the
-  (oversized, duplex-calibrated) Owczarzy Tm shift.
+* Salt/Mg²⁺ enters by default through the Tan-Chen (2007) whole-helix TBI model
+  (:func:`strider.thermo.salt.tan_chen_helix_dg`), folded into the closed-state
+  ΔG₃₇ before ΔS is derived.  Tan-Chen reproduces the experimental Mg²⁺ Tm slope
+  (~0.7 °C/mM on a DNA molecular-beacon qPCR panel) where the per-base-pair model
+  under-shoots (~0.4) and the duplex-calibrated Owczarzy correction over-shoots
+  (~2.2).  For stems below 6 bp (outside Tan-Chen's fitted range) it falls back to
+  the per-base-pair :func:`dg_per_bp_salt` — the same correction the ensemble DP
+  uses.  Select via ``salt_model={"auto","tan_chen","per_bp"}``.
 """
 
 from __future__ import annotations
@@ -56,6 +60,7 @@ class HairpinThermo:
     dG37: float        # kcal/mol, salt-corrected closed-state free energy
     n_pairs: int
     structure: str
+    salt_model: str = "per_bp"   # which salt correction was applied ("tan_chen"/"per_bp")
 
 
 def hairpin_thermo(
@@ -64,6 +69,7 @@ def hairpin_thermo(
     magnesium_M: float = 0.0,
     material: str = "dna",
     structure: list[tuple[int, int]] | str | None = None,
+    salt_model: str = "auto",
 ) -> HairpinThermo:
     """
     Two-state thermodynamics (Tm, ΔH, ΔS, ΔG₃₇) for a hairpin.
@@ -75,6 +81,14 @@ def hairpin_thermo(
     structure : optional structure to score; either a list of ``(i, j)`` base
         pairs or a dot-bracket string.  If omitted the MFE hairpin is predicted
         with :func:`strider.structure.mfe.fold_mfe`.
+    salt_model : how Na⁺/Mg²⁺ enters the closed-state ΔG₃₇.
+        ``"auto"`` (default) uses the Tan-Chen (2007) whole-helix TBI model
+        (:func:`strider.thermo.salt.tan_chen_helix_dg`) for stems ≥
+        ``TAN_CHEN_MIN_BP`` bp and falls back to the per-base-pair model below
+        that; ``"tan_chen"`` forces Tan-Chen (raises on too-short stems);
+        ``"per_bp"`` forces the per-base-pair :func:`dg_per_bp_salt`.
+        Tan-Chen reproduces the experimental Mg²⁺ Tm slope (~0.7 °C/mM) where the
+        per-bp/Owczarzy models under-/over-shoot — see the README benchmark.
 
     Raises
     ------
@@ -82,7 +96,7 @@ def hairpin_thermo(
         unbranched hairpin (e.g. a multiloop).
     """
     from strider.structure.mfe import fold_mfe
-    from strider.thermo.salt import dg_per_bp_salt
+    from strider.thermo.salt import dg_per_bp_salt, tan_chen_helix_dg, TAN_CHEN_MIN_BP
     from strider.thermo.structure_thermo import (
         parse_hairpin_pairs,
         structure_enthalpy,
@@ -106,8 +120,20 @@ def hairpin_thermo(
     dG37_1M = structure_free_energy(seq, struct_str, material)
     dH = structure_enthalpy(seq, struct_str, material)
 
-    # Fold salt into the closed-state ΔG₃₇ (per closed base pair), then derive ΔS.
-    dG37 = dG37_1M + len(pairs) * dg_per_bp_salt(sodium_M, magnesium_M)
+    # Fold salt into the closed-state ΔG₃₇, then derive ΔS at T_ref.  The Tan-Chen
+    # whole-helix model needs the stem length and is only fit for ≥6 bp; below that
+    # (or when forced off) we use the per-base-pair correction.
+    n = len(pairs)
+    use_tc = salt_model == "tan_chen" or (
+        salt_model == "auto" and material.lower() in ("dna", "rna") and n >= TAN_CHEN_MIN_BP
+    )
+    if use_tc:
+        salt_dg = tan_chen_helix_dg(n, sodium_M, magnesium_M, material)
+        applied = "tan_chen"
+    else:
+        salt_dg = n * dg_per_bp_salt(sodium_M, magnesium_M)
+        applied = "per_bp"
+    dG37 = dG37_1M + salt_dg
     dS_kcal = (dH - dG37) / T_REF               # kcal/mol/K
     if dS_kcal == 0:
         raise ValueError("degenerate entropy — cannot define a melting point")
@@ -117,8 +143,9 @@ def hairpin_thermo(
         dH=dH,
         dS=dS_kcal * 1000.0,
         dG37=dG37,
-        n_pairs=len(pairs),
+        n_pairs=n,
         structure=struct_str,
+        salt_model=applied,
     )
 
 
@@ -127,9 +154,11 @@ def hairpin_tm(
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
     material: str = "dna",
+    salt_model: str = "auto",
 ) -> float:
     """Melting temperature (°C) of the predicted hairpin. See :func:`hairpin_thermo`."""
-    return hairpin_thermo(seq, sodium_M, magnesium_M, material).tm_celsius
+    return hairpin_thermo(seq, sodium_M, magnesium_M, material,
+                          salt_model=salt_model).tm_celsius
 
 
 def fraction_folded(
@@ -138,12 +167,13 @@ def fraction_folded(
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
     material: str = "dna",
+    salt_model: str = "auto",
 ) -> float:
     """
     Two-state folded fraction at ``celsius`` — the quantity a beacon melt
     (fluorophore dequenching) actually traces out.
     """
-    th = hairpin_thermo(seq, sodium_M, magnesium_M, material)
+    th = hairpin_thermo(seq, sodium_M, magnesium_M, material, salt_model=salt_model)
     T = celsius + 273.15
     dG_T = th.dH - T * th.dS / 1000.0           # ΔG(T) of the closed state
     R = 1.987e-3

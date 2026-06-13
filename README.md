@@ -321,7 +321,7 @@ from strider import hairpin_tm, hairpin_thermo, fraction_folded
 
 seq = 'CTTTCAACACTGTTGCAGTAA'
 
-# Tm at the experimental buffer (Mg²⁺ via the per-base-pair salt model)
+# Tm at the experimental buffer (Mg²⁺ via the Tan-Chen salt model by default)
 tm = hairpin_tm(seq, sodium_M=0.05, magnesium_M=0.010)
 print(f"Tm = {tm:.1f} °C")                       # Tm = 40.1 °C
 
@@ -332,6 +332,40 @@ print(f"folded fraction @37 °C = {fraction_folded(seq, 37, 0.05, 0.010):.2f}")
 ```
 
 > Two-state, single-hairpin only (bulges/multiloops raise `ValueError` — use `pfunc` for those). A hairpin Tm is hypersensitive to the ΔH/ΔS bookkeeping (a ~few-percent shift moves Tm by tens of °C), so treat the absolute value as calibratable against experiment rather than exact.
+
+##### Mg²⁺ / salt model (Tan-Chen)
+
+The hairpin Tm folds the salt dependence into the closed-state ΔG₃₇ before ΔS is derived. By default (`salt_model="auto"`) stems ≥ 6 bp use the **tightly-bound-ion (TBI) model of Tan & Chen (2007)**, which — unlike the per-base-pair correction used by the partition-function DP — is a *whole-helix* quantity that needs the stem length *N*. The mean electrostatic folding free energy per base stack is
+
+```
+Δg₁ = a₁ + b₁/N        (Na⁺)        a₁ = −0.07·ln[Na⁺] + 0.012·ln²[Na⁺],  b₁ = 0.013·ln²[Na⁺]
+Δg₂ = a₂ + b₂/N²       (Mg²⁺)       a₂ = 0.02·ln[Mg²⁺] + 0.0068·ln²[Mg²⁺], b₂ = 1.18·ln[Mg²⁺] + 0.344·ln²[Mg²⁺]
+```
+
+(DNA coefficients; RNA coefficients also available). Mixed Na⁺/Mg²⁺ buffers combine the two by fractional weights with a cross-term,
+
+```
+x₁ = [Na⁺] / ([Na⁺] + (8.1 − 32.4/N)(5.2 − ln[Na⁺])[Mg²⁺]),   x₂ = 1 − x₁
+Δg₁₂ = −0.6·x₁·x₂·ln[Na⁺]·ln((1/x₁ − 1)[Na⁺]) / N
+ΔG₃₇(salt) = ΔG₃₇(1 M) + (N−1)(x₁Δg₁ + x₂Δg₂) + Δg₁₂
+```
+
+At 1 M Na⁺ / 0 Mg²⁺ every term is zero, so the 1 M reference Tm is unchanged. Stems below 6 bp (outside the fitted range, where `8.1 − 32.4/N` degenerates) fall back to the per-base-pair `dg_per_bp_salt`. Force a model with `salt_model="tan_chen"` or `"per_bp"`.
+
+**Why Tan-Chen:** benchmarked against a panel of DNA molecular-beacon hairpins measured by qPCR melt (V. Rejtar data[^rejtar], 50 mM Na⁺, 2.25–10 mM Mg²⁺), Tan-Chen reproduces the experimental Mg²⁺ slope while the per-bp model under-shoots and the duplex-calibrated Owczarzy (2008) correction over-shoots ~3×:
+
+| Mg²⁺ Tm slope, 2.25→10 mM @ 50 mM Na⁺ | °C/mM |
+|---|---|
+| Measured (qPCR melt, DNA beacons) | **≈0.70** |
+| **Tan-Chen 2007 (default)** | **0.71** |
+| per-base-pair `dg_per_bp_salt` | 0.44 |
+| Owczarzy 2008 | 2.18 |
+
+On the monovalent (Na⁺) axis all three agree within ~3 °C (e.g. ΔTm ≈ −14 °C at 50 mM vs 1 M), and Tan-Chen tracks ViennaRNA's independent salt model. Coefficients verified against Tan & Chen (2007) Eqs. 24–30.
+
+> **Citation.** Z.-J. Tan and S.-J. Chen, "RNA Helix Stability in Mixed Na⁺/Mg²⁺ Solution," *Biophysical Journal* **92**(10):3615–3632 (2007). doi:10.1529/biophysj.106.100388. (Companion: Tan & Chen, *Biophys. J.* **90**(4):1175–1190, 2006.)
+
+[^rejtar]: Department of Biochemistry, Masaryk University.
 
 #### Reaction ΔΔG
 
