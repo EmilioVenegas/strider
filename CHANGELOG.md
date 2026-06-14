@@ -5,6 +5,12 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.3.4] - 2026-06-14
+
+### Bug Fixes
+
+- Implement lazy loading for differentiable API and add optional torch dependency support
+
 ## [0.3.3] - 2026-06-13
 
 ### Features
