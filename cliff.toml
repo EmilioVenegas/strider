@@ -32,6 +32,15 @@ body = """
 trim = true
 footer = ""
 
+# Version-bump policy: how `git-cliff --bump` derives the next version from the
+# Conventional Commit types since the last tag.
+#   feat:            -> MINOR  (0.3.x -> 0.4.0)
+#   fix:/perf:/etc.  -> PATCH  (0.3.3 -> 0.3.4)
+#   feat!: / BREAKING CHANGE -> MAJOR (held to MINOR while pre-1.0)
+[bump]
+features_always_bump_minor = true
+breaking_always_bump_major = false   # pre-1.0: a breaking change bumps MINOR, not 1.0.0
+
 [git]
 conventional_commits = true
 filter_unconventional = true   # drop commits that aren't Conventional Commits
