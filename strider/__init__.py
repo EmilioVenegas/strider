@@ -80,8 +80,8 @@ from strider.kinetics.enumerator import (
 from strider.design.objective import DesignObjective
 from strider.design.constraints import HardConstraint
 from strider.design.optimizer import SequenceDesigner, DomainSpec, DesignResult
-from strider.design.diff_designer import DifferentiableDesigner
-from strider.thermo.diff_design import DiffObjective
+# DifferentiableDesigner / DiffObjective require torch (optional extra: strider-dna[diff]).
+# They are loaded lazily via __getattr__ below so `import strider` works without torch.
 from strider.design.mutation import MutationAnalyzer, MutationProfile
 from strider.design.assay import Assay, AssayPanel, Assembly
 from strider.design.policies import (
@@ -199,3 +199,33 @@ __all__ = [
     # Export
     "to_vienna", "to_ct", "to_bpseq", "to_fasta", "to_oxdna", "write",
 ]
+
+# Lazily import the torch-backed differentiable API (PEP 562) so the rest of the
+# package is usable without torch. Accessing these names installs a clear hint if
+# the optional dependency is missing.
+_LAZY = {
+    "DifferentiableDesigner": ("strider.design.diff_designer", "DifferentiableDesigner"),
+    "DiffObjective": ("strider.thermo.diff_design", "DiffObjective"),
+}
+
+
+def __getattr__(name):  # noqa: D401 - module-level lazy loader
+    target = _LAZY.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_path, attr = target
+    try:
+        import importlib
+        module = importlib.import_module(module_path)
+    except ImportError as exc:  # almost always a missing torch
+        raise ImportError(
+            f"strider.{name} requires the optional 'torch' dependency. "
+            f"Install it with:  pip install 'strider-dna[diff]'"
+        ) from exc
+    value = getattr(module, attr)
+    globals()[name] = value  # cache so __getattr__ isn't hit again
+    return value
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_LAZY.keys()))

@@ -24,7 +24,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e .
+        # [diff] pulls torch so the differentiable-design tests run instead of skipping.
+        pip install -e ".[diff]"
         pip install pytest
         
     - name: Test with pytest

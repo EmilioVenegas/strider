@@ -5,6 +5,8 @@ Tests for the differentiable design layer: BPP-based objectives
 """
 
 import pytest
+
+pytest.importorskip("torch", reason="torch not installed (optional 'diff' extra)")
 import torch
 
 from strider import ThermoEngine

@@ -1,6 +1,8 @@
 import random
 
 import pytest
+
+pytest.importorskip("torch", reason="torch not installed (optional 'diff' extra)")
 import torch
 import torch.nn as nn
 import torch.optim as optim
