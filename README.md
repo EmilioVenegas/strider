@@ -83,10 +83,20 @@ pip install strider-dna[vienna]   # ViennaRNA backend (recommended for long sequ
 pip install strider-dna[mantis]   # mantis-delta integration (circuit templates, CRNetwork)
 pip install strider-dna[pandas]   # SweepResult.to_dataframe()
 pip install strider-dna[parallel] # ProcessPoolExecutor sweeps
+pip install strider-dna[diff]     # PyTorch — gradient-based differentiable design
 pip install strider-dna[full]     # all of the above
 ```
 
 **Requirements:** Python ≥ 3.10, NumPy ≥ 1.24, SciPy ≥ 1.10, Matplotlib ≥ 3.6.
+PyTorch is **not** required for the core library — it is pulled in only by the `[diff]`
+(or `[full]`) extra, for the differentiable design API.
+
+> **PyTorch is optional.** Importing `strider` and using the full thermodynamics, design,
+> tube, and circuit APIs works **without** PyTorch installed. Only the differentiable
+> components — `DifferentiableDesigner` and `DiffObjective` — need it. They are imported
+> lazily, so `import strider` never fails on a missing torch; accessing them without it
+> raises a clear hint to `pip install 'strider-dna[diff]'`. See
+> [§16 Differentiable thermodynamics (PyTorch)](#16-differentiable-thermodynamics-pytorch).
 
 > **Note on import name:** the PyPI distribution is `strider-dna`, but the Python package is imported as `strider`:
 > ```python
@@ -1397,6 +1407,9 @@ The exporter writes every sub-table, so the result is a complete self-contained 
 ---
 
 ### 16. Differentiable thermodynamics (PyTorch)
+
+> **Requires PyTorch** — everything in this section needs the optional `diff` extra:
+> `pip install 'strider-dna[diff]'`. The rest of strider works without it.
 
 `strider.thermo.differentiable` provides a fully batched PyTorch McCaskill-style partition-function DP whose nearest-neighbor parameters are `nn.Parameter`s — so the same ensemble ΔG that `ThermoEngine.pfunc(...)` computes can be back-propagated through, optimized, and trained against experimental data. It doubles as a **fast batched / GPU backend**: the whole batch folds in one vectorised DP, so it runs **~9–12× faster than the pure-Python native engine** on batched workloads (and scales further on a GPU), closing most of native's speed gap to a C kernel — while remaining learnable, which a closed kernel can never be.
 
