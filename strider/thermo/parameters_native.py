@@ -155,7 +155,6 @@ def build_native_paramset(material: str = "DNA") -> ParameterSet:
         "multiloop_init": 3.4,
         "multiloop_pair": 0.4,
         "multiloop_base": 0.0,
-        "join_penalty": 1.96,
         "log_loop_penalty": 1.07,
         **advanced,
     }
@@ -179,7 +178,6 @@ def build_native_paramset(material: str = "DNA") -> ParameterSet:
             "interior_mismatch": dict(INTERIOR_MISMATCH_DH),
             "hairpin_triloop": dict(HAIRPIN_TRILOOP_DH),
             "hairpin_tetraloop": dict(HAIRPIN_TETRALOOP_DH),
-            "join_penalty": 0.0,
         }
     else:
         # RNA loop ΔH not yet curated — keep the coarse ΔG-copy approximation.

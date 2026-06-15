@@ -57,21 +57,24 @@ def _dimer_mfe(
     The dynamic program enumerates all antiparallel alignments, including
     blunt-end stacks and 3'/5' staggered overlaps, and allows single-base
     bulges on either strand.  Energy terms are taken from the same nearest-
-    neighbour helpers used by the hairpin / ensemble DP, plus the
-    bimolecular ``JOIN_PENALTY`` and sign-gated dangle contributions already
-    used in :func:`strider.thermo.structure_thermo._sum_dimer_elements`.
+    neighbour helpers used by the hairpin / ensemble DP plus sign-gated dangle
+    contributions, matching the bookkeeping in
+    :func:`strider.thermo.structure_thermo._sum_dimer_elements`.
+
+    The bimolecular ``JOIN_PENALTY`` is intentionally omitted from the returned
+    energy; it belongs in the concentration-dependent Tm calculation, not in
+    the closed-state duplex free energy.
 
     The search uses the 37 °C ΔG tables (``T_REF = 310.15 K``).  Inter-strand
     helices contain no T-dependent hairpin-loop term, so the ``celsius``
     argument is accepted for API consistency but does not change the predicted
-    structure; the returned ``energy`` is the complex free energy at the
-    reference temperature and already includes the ``JOIN_PENALTY``.
+    structure.
 
     Returns an :class:`strider.thermo.engine.MFEResult` whose ``structure`` is
     a dot-bracket string on ``seq1 + seq2`` (no ``&`` separator) and whose
     ``base_pairs`` are sorted, 0-based, and satisfy ``i < len(seq1) <= j``.
     """
-    from strider.thermo._param_context import lookup_scalar, lookup_table, param_context
+    from strider.thermo._param_context import lookup_table, param_context
     from strider.thermo.ensemble import (
         _interior_bulge_energy,
         _stack_energy,
@@ -105,13 +108,12 @@ def _dimer_mfe(
     can_pair = lambda i, j_loc: frozenset([seq1[i], seq2[j_loc]]) in pairs_set
 
     if material == "dna":
-        from strider.thermo.parameters_dna import DANGLE_3, DANGLE_5, JOIN_PENALTY
+        from strider.thermo.parameters_dna import DANGLE_3, DANGLE_5
     else:
-        from strider.thermo.parameters_rna import DANGLE_3, DANGLE_5, JOIN_PENALTY
+        from strider.thermo.parameters_rna import DANGLE_3, DANGLE_5
 
     dangle_5 = lookup_table("dangle_5", DANGLE_5)
     dangle_3 = lookup_table("dangle_3", DANGLE_3)
-    join_penalty = lookup_scalar("join_penalty", JOIN_PENALTY)
 
     INF = float("inf")
     inner = np.full((n1, n2), INF)
@@ -202,7 +204,7 @@ def _dimer_mfe(
                     + _outer_dangles(i, j_loc)
                     + inner[i][j_loc]
                 )
-                total = outer_val + join_penalty
+                total = outer_val
                 if total < best_energy:
                     best_energy = total
                     best_outer = (i, j_loc)

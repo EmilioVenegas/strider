@@ -20,7 +20,7 @@ completeness of the parameter set's ΔH tables; see
 """
 from __future__ import annotations
 
-from strider.thermo._param_context import param_context, lookup_scalar, lookup_table
+from strider.thermo._param_context import param_context, lookup_table
 from strider.thermo.ensemble import (
     _stack_energy,
     _hairpin_loop_energy,
@@ -149,15 +149,18 @@ def parse_dimer_pairs(structure: str | list[tuple[int, int]], n1: int):
     return pairs
 
 
-def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float,
-                        with_join: bool = True) -> float:
+def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float) -> float:
     """Sum per-element ΔG/ΔH for a single nested bimolecular duplex.
 
     The walk uses the same stack/interior/bulge decomposition as the hairpin
-    walk, but replaces the hairpin-loop term with a bimolecular association
-    ``join_penalty`` and terminal-pair / dangle contributions at both helix
-    ends.  Whichever tables are active via :func:`param_context` decide whether
-    the returned value is ΔG or ΔH.
+    walk, but replaces the hairpin-loop term with terminal-pair / dangle
+    contributions at both helix ends.  Whichever tables are active via
+    :func:`param_context` decide whether the returned value is ΔG or ΔH.
+
+    The bimolecular association ``JOIN_PENALTY`` is intentionally omitted here;
+    it belongs in the concentration-dependent Tm calculation (via the ``ln(C)``
+    term), not in the closed-state duplex free energy.  This matches the
+    reporting convention used by primer3 and IDT OligoAnalyzer.
     """
     n = len(seq)
     paired = set()
@@ -177,11 +180,11 @@ def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float,
 
     if material == "dna":
         from strider.thermo.parameters_dna import (
-            DANGLE_3, DANGLE_5, JOIN_PENALTY,
+            DANGLE_3, DANGLE_5,
         )
     else:
         from strider.thermo.parameters_rna import (
-            DANGLE_3, DANGLE_5, JOIN_PENALTY,
+            DANGLE_3, DANGLE_5,
         )
     dangle_5 = lookup_table("dangle_5", DANGLE_5)
     dangle_3 = lookup_table("dangle_3", DANGLE_3)
@@ -208,8 +211,6 @@ def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float,
         if d3 is not None and d3 < 0:
             total += d3
 
-    if with_join:
-        total += lookup_scalar("join_penalty", JOIN_PENALTY)
     return total
 
 
