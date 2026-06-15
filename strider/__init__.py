@@ -31,6 +31,9 @@ from strider.thermo.salt import owczarzy_tm_correction
 from strider.thermo.hairpin import (
     hairpin_tm, hairpin_thermo, fraction_folded, HairpinThermo,
 )
+from strider.thermo.dimer_thermo import (
+    dimer_tm, dimer_thermo, DimerThermo,
+)
 from strider.thermo.modified import ModificationSite, apply_modifications
 from strider.thermo.parameters import (
     ParameterSet, load_parameters, list_parameter_sets, param_search_paths,
@@ -147,6 +150,7 @@ __all__ = [
     "duplex_dg", "melting_temperature", "reverse_complement", "is_self_complementary",
     "owczarzy_tm_correction",
     "hairpin_tm", "hairpin_thermo", "fraction_folded", "HairpinThermo",
+    "dimer_tm", "dimer_thermo", "DimerThermo",
     "ModificationSite", "apply_modifications",
     "ParameterSet", "load_parameters", "list_parameter_sets", "param_search_paths",
     # Structure

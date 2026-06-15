@@ -330,6 +330,44 @@ class ThermoEngine:
         dH = -80.0  # placeholder; full RNA Tm needs Turner tables
         return dH
 
+    def dimer_thermo(
+        self,
+        seq1: str,
+        seq2: str | None = None,
+        *,
+        structure: str | list[tuple[int, int]] | None = None,
+        strand_conc_M: float = 250e-9,
+        salt_model: str = "auto",
+    ):
+        """Two-state thermodynamics of a bimolecular duplex."""
+        from strider.thermo.dimer_thermo import dimer_thermo as _dt
+        return _dt(
+            seq1,
+            seq2,
+            sodium_M=self.sodium,
+            magnesium_M=self.magnesium,
+            material=self.material,
+            structure=structure,
+            strand_conc_M=strand_conc_M,
+            salt_model=salt_model,
+        )
+
+    def dimer_tm(
+        self,
+        seq1: str,
+        seq2: str | None = None,
+        *,
+        strand_conc_M: float = 250e-9,
+        salt_model: str = "auto",
+    ) -> float:
+        """Melting temperature (°C) of a bimolecular duplex."""
+        return self.dimer_thermo(
+            seq1,
+            seq2,
+            strand_conc_M=strand_conc_M,
+            salt_model=salt_model,
+        ).tm_celsius
+
     # ─── dispatch ────────────────────────────────────────────────────────────
 
     def _mfe_dispatch(self, sequences: tuple[str, ...]) -> MFEResult:
