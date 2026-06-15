@@ -22,6 +22,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 T_REF = 310.15  # K, reference temperature of the ΔG tables
 R = 1.987e-3   # kcal / (mol · K)
 
@@ -37,6 +39,205 @@ class DimerThermo:
     structure: str
     salt_model: str = "per_bp"   # "tan_chen" / "per_bp"
     is_self_dimer: bool = False
+
+
+def _dimer_mfe(
+    seq1: str,
+    seq2: str | None = None,
+    *,
+    engine=None,
+    material: str = "dna",
+    celsius: float = 37.0,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
+):
+    """
+    Minimum free energy inter-strand duplex for two strands.
+
+    The dynamic program enumerates all antiparallel alignments, including
+    blunt-end stacks and 3'/5' staggered overlaps, and allows single-base
+    bulges on either strand.  Energy terms are taken from the same nearest-
+    neighbour helpers used by the hairpin / ensemble DP, plus the
+    bimolecular ``JOIN_PENALTY`` and sign-gated dangle contributions already
+    used in :func:`strider.thermo.structure_thermo._sum_dimer_elements`.
+
+    The search uses the 37 °C ΔG tables (``T_REF = 310.15 K``).  Inter-strand
+    helices contain no T-dependent hairpin-loop term, so the ``celsius``
+    argument is accepted for API consistency but does not change the predicted
+    structure; the returned ``energy`` is the complex free energy at the
+    reference temperature and already includes the ``JOIN_PENALTY``.
+
+    Returns an :class:`strider.thermo.engine.MFEResult` whose ``structure`` is
+    a dot-bracket string on ``seq1 + seq2`` (no ``&`` separator) and whose
+    ``base_pairs`` are sorted, 0-based, and satisfy ``i < len(seq1) <= j``.
+    """
+    from strider.thermo._param_context import lookup_scalar, lookup_table, param_context
+    from strider.thermo.ensemble import (
+        _interior_bulge_energy,
+        _stack_energy,
+        _terminal_pair_penalty,
+        _wc_pairs,
+    )
+    from strider.thermo.engine import MFEResult
+
+    if engine is not None:
+        material = engine.material
+        celsius = engine.celsius
+        sodium_M = engine.sodium
+        magnesium_M = engine.magnesium
+
+    material = material.lower()
+    seq1 = seq1.upper().replace("U", "T")
+    if seq2 is None:
+        seq2 = seq1
+    else:
+        seq2 = seq2.upper().replace("U", "T")
+
+    n1 = len(seq1)
+    n2 = len(seq2)
+    seq = seq1 + seq2
+    n = n1 + n2
+
+    if n1 == 0 or n2 == 0:
+        return MFEResult(energy=0.0, structure="." * n, base_pairs=[], sequence=seq)
+
+    pairs_set = _wc_pairs(material)
+    can_pair = lambda i, j_loc: frozenset([seq1[i], seq2[j_loc]]) in pairs_set
+
+    if material == "dna":
+        from strider.thermo.parameters_dna import DANGLE_3, DANGLE_5, JOIN_PENALTY
+    else:
+        from strider.thermo.parameters_rna import DANGLE_3, DANGLE_5, JOIN_PENALTY
+
+    dangle_5 = lookup_table("dangle_5", DANGLE_5)
+    dangle_3 = lookup_table("dangle_3", DANGLE_3)
+    join_penalty = lookup_scalar("join_penalty", JOIN_PENALTY)
+
+    INF = float("inf")
+    inner = np.full((n1, n2), INF)
+    trace: list[list[tuple[int, int] | None]] = [[None] * n2 for _ in range(n1)]
+
+    def _inner_dangles(i: int, j_loc: int) -> float:
+        """Dangles adjacent to the inner terminus of pair (i, n1+j_loc)."""
+        j_concat = n1 + j_loc
+        total = 0.0
+        if j_concat - 1 >= n1:
+            d5 = dangle_5.get(seq[j_concat] + seq[i] + seq[j_concat - 1])
+            if d5 is not None and d5 < 0:
+                total += d5
+        if i - 1 >= 0 and i + 1 < n1:
+            d3 = dangle_3.get(seq[i - 1] + seq[i] + seq[i + 1])
+            if d3 is not None and d3 < 0:
+                total += d3
+        return total
+
+    def _outer_dangles(i: int, j_loc: int) -> float:
+        """Dangles adjacent to the outer terminus of pair (i, n1+j_loc)."""
+        j_concat = n1 + j_loc
+        total = 0.0
+        if i - 1 >= 0:
+            d5 = dangle_5.get(seq[i] + seq[j_concat] + seq[i - 1])
+            if d5 is not None and d5 < 0:
+                total += d5
+        if j_concat + 1 < n:
+            d3 = dangle_3.get(seq[j_concat - 1] + seq[j_concat] + seq[j_concat + 1])
+            if d3 is not None and d3 < 0:
+                total += d3
+        return total
+
+    def _run_dp() -> tuple[float, list[tuple[int, int]]]:
+        # Fill inner[i][j_loc] from inside out (i decreasing, j_loc increasing).
+        for i in range(n1 - 1, -1, -1):
+            for j_loc in range(n2):
+                if not can_pair(i, j_loc):
+                    continue
+                j_concat = n1 + j_loc
+
+                stop_val = (
+                    _terminal_pair_penalty(seq, i, j_concat, material)
+                    + _inner_dangles(i, j_loc)
+                )
+
+                best_continue = INF
+                best_next: tuple[int, int] | None = None
+                transitions = []
+                if i + 1 < n1 and j_loc - 1 >= 0 and can_pair(i + 1, j_loc - 1):
+                    transitions.append((i + 1, j_loc - 1, 0, 0))
+                if i + 2 < n1 and j_loc - 1 >= 0 and can_pair(i + 2, j_loc - 1):
+                    transitions.append((i + 2, j_loc - 1, 1, 0))
+                if i + 1 < n1 and j_loc - 2 >= 0 and can_pair(i + 1, j_loc - 2):
+                    transitions.append((i + 1, j_loc - 2, 0, 1))
+
+                for ip, jp_loc, nl, nr in transitions:
+                    jp_concat = n1 + jp_loc
+                    if inner[ip][jp_loc] == INF:
+                        continue
+                    if nl == 0 and nr == 0:
+                        e = _stack_energy(seq, i, j_concat, material)
+                    else:
+                        e = _interior_bulge_energy(
+                            seq, i, j_concat, ip, jp_concat, nl, nr, material
+                        )
+                    cand = e + inner[ip][jp_loc]
+                    if cand < best_continue:
+                        best_continue = cand
+                        best_next = (ip, jp_loc)
+
+                if best_next is None or stop_val <= best_continue:
+                    inner[i][j_loc] = stop_val
+                    trace[i][j_loc] = None
+                else:
+                    inner[i][j_loc] = best_continue
+                    trace[i][j_loc] = best_next
+
+        best_energy = INF
+        best_outer: tuple[int, int] | None = None
+        for i in range(n1):
+            for j_loc in range(n2):
+                if not can_pair(i, j_loc):
+                    continue
+                j_concat = n1 + j_loc
+                outer_val = (
+                    _terminal_pair_penalty(seq, i, j_concat, material)
+                    + _outer_dangles(i, j_loc)
+                    + inner[i][j_loc]
+                )
+                total = outer_val + join_penalty
+                if total < best_energy:
+                    best_energy = total
+                    best_outer = (i, j_loc)
+
+        if best_outer is None:
+            return 0.0, []
+
+        pairs: list[tuple[int, int]] = []
+        i, j_loc = best_outer
+        while True:
+            pairs.append((i, n1 + j_loc))
+            nxt = trace[i][j_loc]
+            if nxt is None:
+                break
+            i, j_loc = nxt
+        return best_energy, pairs
+
+    override = None
+    if engine is not None and getattr(engine, "_uses_custom_params", lambda: False)():
+        override = engine.params
+
+    with param_context(override):
+        energy, pairs = _run_dp()
+
+    if not pairs:
+        return MFEResult(energy=0.0, structure="." * n, base_pairs=[], sequence=seq)
+
+    pairs.sort()
+    structure = _dotbracket(seq, pairs)
+    return MFEResult(
+        energy=energy,
+        structure=structure,
+        base_pairs=pairs,
+        sequence=seq,
+    )
 
 
 def dimer_thermo(
@@ -92,7 +293,7 @@ def dimer_thermo(
 
     if structure is None:
         engine = ThermoEngine(material=material, celsius=25.0, sodium=sodium_M, magnesium=magnesium_M)
-        mfe = engine.mfe(seq1, seq2)
+        mfe = _dimer_mfe(seq1, seq2, engine=engine)
         struct = mfe.structure
     elif isinstance(structure, str):
         struct = structure

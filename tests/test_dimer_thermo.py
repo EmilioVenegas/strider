@@ -156,3 +156,32 @@ def test_mfe_path_honours_minimum_loop_size():
     assert r.n_pairs >= 2
     assert r.is_self_dimer
     assert r.dG37 < 0
+
+
+def test_self_dimer_finds_interstrand_helix():
+    # Regression: native seq+seq MFE folds as hairpins; the inter-strand DP
+    # must recover the real homodimer that IDT reports for this sequence.
+    seq = "TCGCATTGAAGATGCAGT"
+    r = dimer_thermo(seq, sodium_M=1.0)
+    assert r.is_self_dimer
+    assert r.n_pairs >= 2
+    assert r.dG37 < 0
+    assert r.tm_celsius > -50
+    assert r.tm_celsius < 100
+    assert "&" not in r.structure
+    n1 = len(seq)
+    assert all(i < n1 <= j for i, j in parse_dimer_pairs(r.structure, n1))
+
+
+def test_heterodimer_regression_reasonable_thermo():
+    from strider.thermo.nn_dna import reverse_complement
+    seq = "GGCTAAGGAACGTAAGCA"
+    r = dimer_thermo(seq, reverse_complement(seq), sodium_M=1.0)
+    assert not r.is_self_dimer
+    assert r.n_pairs >= 2
+    assert r.dG37 < 0
+    assert r.tm_celsius > -50
+    assert r.tm_celsius < 100
+    assert "&" not in r.structure
+    n1 = len(seq)
+    assert all(i < n1 <= j for i, j in parse_dimer_pairs(r.structure, n1))
