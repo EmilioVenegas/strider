@@ -119,6 +119,11 @@ def _dimer_mfe(
     inner = np.full((n1, n2), INF)
     trace: list[list[tuple[int, int] | None]] = [[None] * n2 for _ in range(n1)]
 
+    # Maximum total unpaired bases in an interior loop / bulge considered inside
+    # a dimer helix.  Limiting to 4 captures the 1×1, 1×2, 2×1 and 2×2 exact
+    # tables and is enough for the small loops primer3 scores in homodimers.
+    MAX_LOOP = 4
+
     def _inner_dangles(i: int, j_loc: int) -> float:
         """Dangles adjacent to the inner terminus of pair (i, n1+j_loc)."""
         j_concat = n1 + j_loc
@@ -163,12 +168,12 @@ def _dimer_mfe(
                 best_continue = INF
                 best_next: tuple[int, int] | None = None
                 transitions = []
-                if i + 1 < n1 and j_loc - 1 >= 0 and can_pair(i + 1, j_loc - 1):
-                    transitions.append((i + 1, j_loc - 1, 0, 0))
-                if i + 2 < n1 and j_loc - 1 >= 0 and can_pair(i + 2, j_loc - 1):
-                    transitions.append((i + 2, j_loc - 1, 1, 0))
-                if i + 1 < n1 and j_loc - 2 >= 0 and can_pair(i + 1, j_loc - 2):
-                    transitions.append((i + 1, j_loc - 2, 0, 1))
+                for nl in range(MAX_LOOP + 1):
+                    for nr in range(MAX_LOOP + 1 - nl):
+                        ip = i + 1 + nl
+                        jp_loc = j_loc - 1 - nr
+                        if ip < n1 and jp_loc >= 0 and can_pair(ip, jp_loc):
+                            transitions.append((ip, jp_loc, nl, nr))
 
                 for ip, jp_loc, nl, nr in transitions:
                     jp_concat = n1 + jp_loc
