@@ -18,8 +18,8 @@ def perfect_self():
 
 @pytest.fixture
 def perfect_hetero():
-    # 8-bp heteroduplex, exactly complementary.
-    return "AAAATTTT", "TTTTAAAA"
+    # 8-bp heteroduplex, exactly complementary (s2 = reverse_complement(s1)).
+    return "AAATTTCC", "GGAAATTT"
 
 
 def _full_duplex_structure(n: int) -> str:
@@ -165,7 +165,7 @@ def test_self_dimer_finds_interstrand_helix():
     r = dimer_thermo(seq, sodium_M=1.0)
     assert r.is_self_dimer
     assert r.n_pairs >= 2
-    assert r.dG37 < 0
+    assert r.dG37 < -4.0
     assert r.tm_celsius > -50
     assert r.tm_celsius < 100
     assert "&" not in r.structure
@@ -179,7 +179,7 @@ def test_heterodimer_regression_reasonable_thermo():
     r = dimer_thermo(seq, reverse_complement(seq), sodium_M=1.0)
     assert not r.is_self_dimer
     assert r.n_pairs >= 2
-    assert r.dG37 < 0
+    assert r.dG37 < -10.0
     assert r.tm_celsius > -50
     assert r.tm_celsius < 100
     assert "&" not in r.structure
