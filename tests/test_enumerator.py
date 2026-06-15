@@ -6,6 +6,7 @@ strand-displacement (TMSD) reaction, the enumerator *derives* the canonical
 bind → branch-migration → release network with no hand-written reactions, assigns
 physically-signed detailed-balance rates, and emits a simulable mantis CRNetwork.
 """
+import importlib.util
 import math
 
 import pytest
@@ -116,6 +117,10 @@ class TestTMSDNetwork:
             assert r.kr > 0 and math.isfinite(r.kr)
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("mantis") is None,
+    reason="mantis is an optional peer dependency",
+)
 class TestCRNetworkIntegration:
     def test_to_crnetwork(self):
         res = tmsd_result()
