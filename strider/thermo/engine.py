@@ -408,7 +408,7 @@ class ThermoEngine:
             # hybrid
             dna = s2 if has_u1 else s1
             return hybrid_duplex_dg(dna, self.celsius, self.sodium)
-        return duplex_dg(s1, s2, self.celsius, self.sodium)
+        return duplex_dg(s1, s2, self.celsius, self.sodium, self.magnesium)
 
     # ─── vienna backend ───────────────────────────────────────────────────────
 
