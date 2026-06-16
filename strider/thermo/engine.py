@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Callable, Literal
 
 import numpy as np
 
+from strider.equilibrium import cyclic_symmetry
+
 if TYPE_CHECKING:
     from strider.sweep.cache import DiskCache
     from strider.thermo.modified import ModificationSite
@@ -142,6 +144,9 @@ class ThermoEngine:
 
     def mfe(self, *sequences: str) -> MFEResult:
         """Minimum free energy structure for one or more strands."""
+        if not sequences:
+            raise ValueError("mfe requires at least one sequence")
+        self._validate_alphabet(sequences)
         key = self._cache_key("mfe", sequences)
         if self.cache:
             cached = self.cache.get(key)
@@ -368,6 +373,25 @@ class ThermoEngine:
             salt_model=salt_model,
         ).tm_celsius
 
+    # ─── validation ─────────────────────────────────────────────────────────
+
+    _DNA_SET = set("ACGT")
+    _RNA_SET = set("ACGU")
+
+    def _validate_alphabet(self, sequences: tuple[str, ...]) -> None:
+        """Reject mixed DNA/RNA alphabets when the engine material is fixed."""
+        all_bases = set("".join(sequences))
+        if self.material == "dna" and all_bases & self._RNA_SET - self._DNA_SET:
+            uracil_seqs = [s for s in sequences if "U" in s]
+            raise ValueError(
+                f"RNA base(s) found in DNA engine: {uracil_seqs}"
+            )
+        if self.material == "rna" and all_bases & self._DNA_SET - self._RNA_SET:
+            thymine_seqs = [s for s in sequences if "T" in s]
+            raise ValueError(
+                f"DNA base(s) found in RNA engine: {thymine_seqs}"
+            )
+
     # ─── dispatch ────────────────────────────────────────────────────────────
 
     def _mfe_dispatch(self, sequences: tuple[str, ...]) -> MFEResult:
@@ -375,6 +399,13 @@ class ThermoEngine:
         if self._backend == "vienna":
             return self._mfe_vienna(sequences)
         return self._mfe_native(sequences)
+
+    def _mfe_sigma_correction(self, sequences: tuple[str, ...], celsius: float) -> float:
+        """Rotational-symmetry correction for MFE of a multi-strand complex."""
+        sigma = cyclic_symmetry(list(sequences))
+        if sigma > 1:
+            return R * (celsius + 273.15) * math.log(sigma)
+        return 0.0
 
     def _pfunc_dispatch(self, sequences: tuple[str, ...]) -> PFuncResult:
         """Route partition function calculation to the active backend."""
@@ -388,10 +419,11 @@ class ThermoEngine:
         """MFE via the built-in Zuker-style DP (strider.structure.mfe)."""
         from strider.structure.mfe import fold_mfe
         from strider.thermo._param_context import param_context
-        seq = _concat(sequences)
+        seq = "&".join(sequences)
         override = self.params if self._uses_custom_params() else None
         with param_context(override):
             structure, energy, pairs = fold_mfe(seq, self.celsius, self.material)
+        energy += self._mfe_sigma_correction(sequences, self.celsius)
         return MFEResult(energy=energy, structure=structure, base_pairs=pairs, sequence=seq)
 
     def _pfunc_native(self, sequences: tuple[str, ...]) -> PFuncResult:
@@ -451,15 +483,25 @@ class ThermoEngine:
     # ─── vienna backend ───────────────────────────────────────────────────────
 
     def _mfe_vienna(self, sequences: tuple[str, ...]) -> MFEResult:
-        """MFE via ViennaRNA RNA.fold() or RNA.cofold() for multi-strand input."""
+        """MFE via ViennaRNA RNA.fold() (single strand) or RNA.cofold() (two strands)."""
+        if len(sequences) > 2:
+            raise ValueError("Vienna backend supports at most two strands for MFE")
         from strider.thermo import vienna_backend as vb
         from strider.structure.dot_bracket import parse_pairs
-        seq = _concat(sequences) if len(sequences) == 1 else sequences[0] + "&" + sequences[-1]
-        if len(sequences) > 1:
-            structure, energy = vb.co_fold(sequences[0], sequences[-1], self.celsius)
+
+        if len(sequences) == 1:
+            seq = sequences[0]
+            structure, energy = vb.fold(seq, self.celsius)
         else:
-            structure, energy = vb.fold(sequences[0], self.celsius)
+            seq = "&".join(sequences)
+            structure, energy = vb.co_fold(sequences[0], sequences[1], self.celsius)
+            # ViennaRNA mfe_dimer() returns a flat structure without '&';
+            # reinsert it so len(structure) == len(seq).
+            nick = len(sequences[0])
+            structure = structure[:nick] + "&" + structure[nick:]
+
         pairs = parse_pairs(structure.replace("&", ""))
+        energy += self._mfe_sigma_correction(sequences, self.celsius)
         return MFEResult(energy=energy, structure=structure, base_pairs=pairs, sequence=seq)
 
     def _pfunc_vienna(self, sequences: tuple[str, ...]) -> PFuncResult:
@@ -510,7 +552,3 @@ class ThermoEngine:
             f"backend={self._backend!r}{ps_part})"
         )
 
-
-def _concat(sequences: tuple[str, ...]) -> str:
-    """Concatenate a tuple of sequence strings into a single string."""
-    return "".join(sequences)
