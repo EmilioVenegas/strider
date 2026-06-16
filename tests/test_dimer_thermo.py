@@ -159,18 +159,42 @@ def test_mfe_path_honours_minimum_loop_size():
 
 
 def test_self_dimer_finds_interstrand_helix():
-    # Regression: native seq+seq MFE folds as hairpins; the inter-strand DP
-    # must recover the real homodimer that IDT reports for this sequence.
+    # Regression: native seq+seq MFE folds as intra-strand hairpins; the
+    # inter-strand DP must instead return a real cross-junction helix.
+    #
+    # NOTE: this only checks that *an* inter-strand duplex is found — not that it
+    # is the IDT/primer3 structure.  strider's DP is Watson-Crick only, so for
+    # this sequence it returns a short 4-bp helix where primer3 finds a longer
+    # mismatch-containing duplex (ΔH≈-78, Tm≈19.5 °C).  Pinning that is the job
+    # of ``test_self_dimer_matches_primer3_structure`` below (xfail until the
+    # mismatch-aware DP lands).  Avoid a ΔG magnitude threshold here: it would
+    # silently encode the wrong structure (and previously masked the missing
+    # bimolecular-initiation term, which made the short helix look too stable).
     seq = "TCGCATTGAAGATGCAGT"
     r = dimer_thermo(seq, sodium_M=1.0)
     assert r.is_self_dimer
     assert r.n_pairs >= 2
-    assert r.dG37 < -4.0
-    assert r.tm_celsius > -50
-    assert r.tm_celsius < 100
+    assert r.dG37 < 0
+    assert -50 < r.tm_celsius < 100
     assert "&" not in r.structure
     n1 = len(seq)
     assert all(i < n1 <= j for i, j in parse_dimer_pairs(r.structure, n1))
+
+
+@pytest.mark.xfail(
+    reason="Issue B: WC-only dimer DP cannot form the mismatch-containing "
+    "homodimer primer3/IDT report; needs the mismatch-stack-aware DP "
+    "(consumes the PR-imported mismatch STACK params).",
+    strict=True,
+)
+def test_self_dimer_matches_primer3_structure():
+    # primer3 calc_homodimer for this sequence (mv=1000, dna=250 nM, 37 °C):
+    #   ΔG37 = -5.57 kcal/mol, ΔH = -77.8 kcal/mol, Tm = 19.5 °C
+    # via a mismatch-bridged ~8-bp duplex.  strider currently returns a clean
+    # 4-bp helix (ΔH≈-26, Tm≈-21), so ΔH/Tm are far off.
+    r = dimer_thermo("TCGCATTGAAGATGCAGT", sodium_M=1.0, strand_conc_M=250e-9)
+    assert r.dH == pytest.approx(-77.8, abs=8.0)
+    assert r.tm_celsius == pytest.approx(19.5, abs=4.0)
 
 
 def test_heterodimer_regression_reasonable_thermo():
@@ -234,3 +258,48 @@ class TestDimerThermoSubopt:
 
     def test_self_dimer_flag_set(self, subopt_results):
         assert all(r.is_self_dimer for r in subopt_results)
+
+
+class TestDimerVsReference:
+    """Pin perfect-duplex thermodynamics to independent engines.
+
+    For fully-complementary duplexes strider predicts the same structure as
+    primer3/NUPACK, so its ΔG37/ΔH/Tm must match theirs within tolerance.  These
+    are the cases that guard the bimolecular-initiation term: without it, Tm runs
+    +7…+11 °C high and these assertions fail.
+
+    Reference values (independently reproduced in this review):
+      * primer3 v2.3.0  ``calc_homodimer`` / ``calc_heterodimer`` at temp_c=37
+      * NUPACK 4.0  equilibrium melt curve (fraction-bound = 0.5)
+    primer3 and the NUPACK melt agree with each other to within ~2-3 °C.
+    """
+
+    # seq1, seq2(None=self), Na_M, conc_M, forced_full, p3_dG37, p3_dH, p3_Tm, nupack_Tm
+    CASES = [
+        ("GCGCGCGC", None, 1.0, 50e-9, True, -13.45, -70.8, 51.2, 49.6),
+        ("AAATTTCC", "GGAAATTT", 1.0, 50e-9, True, -6.05, -52.6, 9.2, 12.7),
+        ("GGCTAAGGAACGTAAGCA", "__revcomp__", 1.0, 250e-9, False, -22.03, -138.8, 65.8, None),
+    ]
+
+    @pytest.mark.parametrize(
+        "seq1,seq2,na,conc,forced,p3_dg,p3_dh,p3_tm,nupack_tm",
+        CASES,
+        ids=[c[0] for c in CASES],
+    )
+    def test_matches_primer3(self, seq1, seq2, na, conc, forced, p3_dg, p3_dh, p3_tm, nupack_tm):
+        from strider.thermo.nn_dna import reverse_complement
+        if seq2 == "__revcomp__":
+            seq2 = reverse_complement(seq1)
+        struct = None
+        if forced:
+            n = len(seq1)
+            struct = "(" * n + ")" * n
+        r = dimer_thermo(seq1, seq2, sodium_M=na, structure=struct, strand_conc_M=conc)
+
+        assert r.dG37 == pytest.approx(p3_dg, abs=0.5), "ΔG37 off vs primer3"
+        assert r.dH == pytest.approx(p3_dh, abs=4.0), "ΔH off vs primer3"
+        # Tm must track primer3 closely; the initiation term is what keeps this
+        # from drifting ~10 °C high.
+        assert r.tm_celsius == pytest.approx(p3_tm, abs=3.0), "Tm off vs primer3"
+        if nupack_tm is not None:
+            assert r.tm_celsius == pytest.approx(nupack_tm, abs=4.0), "Tm off vs NUPACK melt"

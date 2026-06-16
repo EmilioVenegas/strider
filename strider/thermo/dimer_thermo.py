@@ -8,13 +8,13 @@ A duplex melts in a two-state reaction
 so its melting temperature depends on strand concentration.  This module walks
 a given inter-strand helix with the same per-element engine used for hairpins
 (``_stack_energy``, ``_interior_bulge_energy``) but replaces the hairpin-loop
-term with ``JOIN_PENALTY`` plus terminal-pair / dangling-end contributions at
-both helix ends.  ΔH is obtained by running the identical walk against the ΔH
-tables, so
+term with terminal-pair / dangling-end contributions at both helix ends, and
+adds the bimolecular duplex *initiation* (nucleation) term once per duplex.  ΔH
+is obtained by running the identical walk against the ΔH tables, so
 
     ΔS = (ΔH − ΔG₃₇) / T_ref
 
-is exact at the table reference temperature 310.15 K (37 °C).
+is exact at the table reference temperature 310.15 K (37 °C).  The two-state Tm then follows from ΔH, ΔS and the concentration term R·ln(C_T) see :data:`DUPLEX_INIT_DG37` for why initiation and the concentration term are both needed and are not interchangeable.
 """
 
 from __future__ import annotations
@@ -26,6 +26,23 @@ import numpy as np
 
 T_REF = 310.15  # K, reference temperature of the ΔG tables
 R = 1.987e-3   # kcal / (mol · K)
+
+# SantaLucia & Hicks (2004) unified bimolecular duplex *initiation* (nucleation).
+# Applied once per duplex, independent of length/sequence and of the terminal-AT
+# penalty (which the per-element walk already adds at both helix ends).  This is
+# the duplex-formation nucleation free energy and is PHYSICALLY DISTINCT from the
+# concentration term R·ln(C_T): the latter is translational entropy of bringing
+# two strands together, the former is the enthalpic/entropic cost of nucleating
+# the first base pair.  Both are required for a correct two-state Tm.
+#
+#   ΔG°37_init = +1.96 kcal/mol,  ΔH°_init = +0.2 kcal/mol
+#   ⇒ ΔS°_init = (ΔH − ΔG37)/T_ref = (0.2 − 1.96)/310.15·1000 ≈ −5.7 cal/mol/K
+#
+# Omitting it (the state of this branch before the fix) left ΔH correct but ΔS
+# ~6 cal/mol/K too small in magnitude, inflating dimer Tm by ~7–11 °C versus
+# primer3 and NUPACK equilibrium melts.
+DUPLEX_INIT_DG37 = 1.96  # kcal/mol
+DUPLEX_INIT_DH = 0.2     # kcal/mol
 
 
 @dataclass(frozen=True)
@@ -362,6 +379,14 @@ def dimer_thermo(
 
     dG37_1M = structure_free_energy_dimer(seq, n1, struct, material)
     dH = structure_enthalpy_dimer(seq, n1, struct, material)
+
+    # Bimolecular duplex initiation (nucleation), once per duplex.  Added to both
+    # ΔG37 and ΔH so that ΔS = (ΔH − ΔG37)/T_ref picks up ΔS_init ≈ −5.7 cal/mol/K,
+    # which is what sets the correct melting temperature.  The initiation term is
+    # a constant offset and therefore does not affect MFE structure selection,
+    # so the predicting DP (``_dimer_mfe_candidates``) deliberately omits it.
+    dG37_1M += DUPLEX_INIT_DG37
+    dH += DUPLEX_INIT_DH
 
     use_tc = salt_model == "tan_chen" or (
         salt_model == "auto" and material.lower() in ("dna", "rna") and n >= TAN_CHEN_MIN_BP
