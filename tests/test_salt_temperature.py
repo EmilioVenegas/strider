@@ -481,3 +481,85 @@ class TestRNALoopEnthalpy:
         dgs = [ThermoEngine("rna", c, sodium=1.0, magnesium=0.0).pfunc(seq).free_energy
                for c in (10, 25, 37, 50, 65)]
         assert all(b > a for a, b in zip(dgs, dgs[1:]))
+
+
+# ─── RNA dangle / terminal-mismatch × temperature (GAP-4 → completes GAP-1) ────
+
+class TestRNADangleTemperature:
+    """RNA dangle/terminal-mismatch ride the *live* route-1 DP path
+    (`_apply_coaxial_external` is DNA-only), so their NUPACK-rna06 ΔH enters the
+    paramset and makes them temperature-correct — the RNA half of GAP-1."""
+
+    def test_rna_dangle_tm_dh_validated_against_strider_tables(self):
+        import strider.thermo.parameters_rna as pr
+        from strider.thermo._rna_enthalpy_generated import (
+            DANGLE_5_DH, DANGLE_3_DH, TERMINAL_MISMATCH_DH,
+        )
+        assert set(DANGLE_5_DH) == set(pr.DANGLE_5)
+        assert set(DANGLE_3_DH) == set(pr.DANGLE_3)
+        assert set(TERMINAL_MISMATCH_DH) == set(pr.TERMINAL_MISMATCH)
+        # real (non-ΔG-copy) enthalpies, so ΔS ≠ 0 for these terms
+        assert any(v != 0.0 for v in DANGLE_5_DH.values())
+        assert any(v != 0.0 for v in TERMINAL_MISMATCH_DH.values())
+
+    def test_rna_paramset_emits_dangle_tm_identity_at_37(self):
+        import strider.thermo.parameters_rna as pr
+        ps = native_temperature_paramset("rna", 37.0)
+        for tbl, const in [("dangle_5", pr.DANGLE_5), ("dangle_3", pr.DANGLE_3),
+                           ("terminal_mismatch", pr.TERMINAL_MISMATCH)]:
+            assert tbl in ps.dG
+            for k, v in const.items():
+                assert ps.dG[tbl][k] == pytest.approx(v, abs=1e-12)
+
+    def test_rna_dangle_dh_changes_result_off_37(self):
+        # Curated dangle/TM ΔH must shift the off-37 RNA pfunc away from the
+        # ΔH = ΔG₃₇ (frozen-energy) degrade the paramset used previously.
+        import strider.thermo.parameters_rna as pr
+        from strider.thermo.ensemble import ensemble_dg
+        from strider.thermo._param_context import param_context
+
+        seq = "GCGCAAAAGCGCUAGCUUUUGCUA"
+        ps = native_temperature_paramset("rna", 70.0)
+        with param_context(ps):
+            g_curated = ensemble_dg(seq, celsius=70.0, material="rna")[0]
+        # frozen-energy variant: overwrite the three tables with their 37 °C ΔG
+        frozen = native_temperature_paramset("rna", 70.0)
+        for tbl, const in [("dangle_5", pr.DANGLE_5), ("dangle_3", pr.DANGLE_3),
+                           ("terminal_mismatch", pr.TERMINAL_MISMATCH)]:
+            frozen.dG[tbl] = dict(const)
+        with param_context(frozen):
+            g_frozen = ensemble_dg(seq, celsius=70.0, material="rna")[0]
+        assert g_curated != g_frozen
+
+    def test_rna_residual_vs_vienna_shrinks(self):
+        # Curated dangle/TM ΔH moves the RNA ensemble closer to ViennaRNA across
+        # off-37 temperatures (model-vs-model, Turner-2004 lineage on both sides).
+        RNA = pytest.importorskip("RNA")
+        import strider.thermo.parameters_rna as pr
+        from strider.thermo.ensemble import ensemble_dg
+        from strider.thermo._param_context import param_context
+
+        def vienna(seq, Tc):
+            md = RNA.md(); md.temperature = Tc; md.dangles = 2
+            return RNA.fold_compound(seq.replace("T", "U"), md).pf()[1]
+
+        def strider(seq, Tc, frozen):
+            ps = native_temperature_paramset("rna", Tc)
+            if frozen:
+                for tbl, const in [("dangle_5", pr.DANGLE_5), ("dangle_3", pr.DANGLE_3),
+                                   ("terminal_mismatch", pr.TERMINAL_MISMATCH)]:
+                    ps.dG[tbl] = dict(const)
+            with param_context(ps):
+                return ensemble_dg(seq, celsius=Tc, material="rna")[0]
+
+        seqs = ["GCGCAAAAGCGCUAGCUUUUGCUA", "GGGAAACCCUUU",
+                "CGCGCGAAAUCGCGCG", "AUGCGCAAAGCGCAUU"]
+        res_new = res_frozen = 0.0
+        n = 0
+        for s in seqs:
+            for Tc in (25, 55, 70):
+                v = vienna(s, Tc)
+                res_new += abs(strider(s, Tc, False) - v)
+                res_frozen += abs(strider(s, Tc, True) - v)
+                n += 1
+        assert res_new / n < res_frozen / n
