@@ -41,7 +41,7 @@ class DimerThermo:
     is_self_dimer: bool = False
 
 
-def _dimer_mfe(
+def _dimer_mfe_candidates(
     seq1: str,
     seq2: str | None = None,
     *,
@@ -50,16 +50,16 @@ def _dimer_mfe(
     celsius: float = 37.0,
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
-):
+) -> list[tuple[float, list[tuple[int, int]]]]:
     """
-    Minimum free energy inter-strand duplex for two strands.
+    Rank every antiparallel inter-strand helix start state by closed-state
+    free energy.
 
-    The dynamic program enumerates all antiparallel alignments, including
-    blunt-end stacks and 3'/5' staggered overlaps, and allows single-base
-    bulges on either strand.  Energy terms are taken from the same nearest-
-    neighbour helpers used by the hairpin / ensemble DP plus sign-gated dangle
-    contributions, matching the bookkeeping in
-    :func:`strider.thermo.structure_thermo._sum_dimer_elements`.
+    The dynamic program is identical to :func:`_dimer_mfe` but, instead of
+    returning only the best start, returns all candidate helices sorted by
+    total energy ascending and then by base-pair count descending (more pairs
+    wins ties).  Distinct start pairs are reported individually; overlapping
+    alignments are not collapsed.
 
     The bimolecular ``JOIN_PENALTY`` is intentionally omitted from the returned
     energy; it belongs in the concentration-dependent Tm calculation, not in
@@ -69,19 +69,14 @@ def _dimer_mfe(
     helices contain no T-dependent hairpin-loop term, so the ``celsius``
     argument is accepted for API consistency but does not change the predicted
     structure.
-
-    Returns an :class:`strider.thermo.engine.MFEResult` whose ``structure`` is
-    a dot-bracket string on ``seq1 + seq2`` (no ``&`` separator) and whose
-    ``base_pairs`` are sorted, 0-based, and satisfy ``i < len(seq1) <= j``.
     """
-    from strider.thermo._param_context import lookup_table, param_context
+    from strider.thermo._param_context import lookup_table
     from strider.thermo.ensemble import (
         _interior_bulge_energy,
         _stack_energy,
         _terminal_pair_penalty,
         _wc_pairs,
     )
-    from strider.thermo.engine import MFEResult
 
     if engine is not None:
         material = engine.material
@@ -102,7 +97,7 @@ def _dimer_mfe(
     n = n1 + n2
 
     if n1 == 0 or n2 == 0:
-        return MFEResult(energy=0.0, structure="." * n, base_pairs=[], sequence=seq)
+        return []
 
     pairs_set = _wc_pairs(material)
     can_pair = lambda i, j_loc: frozenset([seq1[i], seq2[j_loc]]) in pairs_set
@@ -152,91 +147,135 @@ def _dimer_mfe(
                 total += d3
         return total
 
-    def _run_dp() -> tuple[float, list[tuple[int, int]]]:
-        # Fill inner[i][j_loc] from inside out (i decreasing, j_loc increasing).
-        for i in range(n1 - 1, -1, -1):
-            for j_loc in range(n2):
-                if not can_pair(i, j_loc):
+    # Fill inner[i][j_loc] from inside out (i decreasing, j_loc increasing).
+    for i in range(n1 - 1, -1, -1):
+        for j_loc in range(n2):
+            if not can_pair(i, j_loc):
+                continue
+            j_concat = n1 + j_loc
+
+            stop_val = (
+                _terminal_pair_penalty(seq, i, j_concat, material)
+                + _inner_dangles(i, j_loc)
+            )
+
+            best_continue = INF
+            best_next: tuple[int, int] | None = None
+            transitions = []
+            for nl in range(MAX_LOOP + 1):
+                for nr in range(MAX_LOOP + 1 - nl):
+                    ip = i + 1 + nl
+                    jp_loc = j_loc - 1 - nr
+                    if ip < n1 and jp_loc >= 0 and can_pair(ip, jp_loc):
+                        transitions.append((ip, jp_loc, nl, nr))
+
+            for ip, jp_loc, nl, nr in transitions:
+                jp_concat = n1 + jp_loc
+                if inner[ip][jp_loc] == INF:
                     continue
-                j_concat = n1 + j_loc
-
-                stop_val = (
-                    _terminal_pair_penalty(seq, i, j_concat, material)
-                    + _inner_dangles(i, j_loc)
-                )
-
-                best_continue = INF
-                best_next: tuple[int, int] | None = None
-                transitions = []
-                for nl in range(MAX_LOOP + 1):
-                    for nr in range(MAX_LOOP + 1 - nl):
-                        ip = i + 1 + nl
-                        jp_loc = j_loc - 1 - nr
-                        if ip < n1 and jp_loc >= 0 and can_pair(ip, jp_loc):
-                            transitions.append((ip, jp_loc, nl, nr))
-
-                for ip, jp_loc, nl, nr in transitions:
-                    jp_concat = n1 + jp_loc
-                    if inner[ip][jp_loc] == INF:
-                        continue
-                    if nl == 0 and nr == 0:
-                        e = _stack_energy(seq, i, j_concat, material)
-                    else:
-                        e = _interior_bulge_energy(
-                            seq, i, j_concat, ip, jp_concat, nl, nr, material
-                        )
-                    cand = e + inner[ip][jp_loc]
-                    if cand < best_continue:
-                        best_continue = cand
-                        best_next = (ip, jp_loc)
-
-                if best_next is None or stop_val <= best_continue:
-                    inner[i][j_loc] = stop_val
-                    trace[i][j_loc] = None
+                if nl == 0 and nr == 0:
+                    e = _stack_energy(seq, i, j_concat, material)
                 else:
-                    inner[i][j_loc] = best_continue
-                    trace[i][j_loc] = best_next
+                    e = _interior_bulge_energy(
+                        seq, i, j_concat, ip, jp_concat, nl, nr, material
+                    )
+                cand = e + inner[ip][jp_loc]
+                if cand < best_continue:
+                    best_continue = cand
+                    best_next = (ip, jp_loc)
 
-        best_energy = INF
-        best_outer: tuple[int, int] | None = None
-        for i in range(n1):
-            for j_loc in range(n2):
-                if not can_pair(i, j_loc):
-                    continue
-                j_concat = n1 + j_loc
-                outer_val = (
-                    _terminal_pair_penalty(seq, i, j_concat, material)
-                    + _outer_dangles(i, j_loc)
-                    + inner[i][j_loc]
-                )
-                total = outer_val
-                if total < best_energy:
-                    best_energy = total
-                    best_outer = (i, j_loc)
+            if best_next is None or stop_val <= best_continue:
+                inner[i][j_loc] = stop_val
+                trace[i][j_loc] = None
+            else:
+                inner[i][j_loc] = best_continue
+                trace[i][j_loc] = best_next
 
-        if best_outer is None:
-            return 0.0, []
+    candidates = []
+    for i in range(n1):
+        for j_loc in range(n2):
+            if not can_pair(i, j_loc):
+                continue
+            j_concat = n1 + j_loc
+            outer_val = (
+                _terminal_pair_penalty(seq, i, j_concat, material)
+                + _outer_dangles(i, j_loc)
+                + inner[i][j_loc]
+            )
+            if not math.isfinite(outer_val):
+                continue
 
-        pairs: list[tuple[int, int]] = []
-        i, j_loc = best_outer
-        while True:
-            pairs.append((i, n1 + j_loc))
-            nxt = trace[i][j_loc]
-            if nxt is None:
-                break
-            i, j_loc = nxt
-        return best_energy, pairs
+            pairs: list[tuple[int, int]] = []
+            ci, cj_loc = i, j_loc
+            while True:
+                pairs.append((ci, n1 + cj_loc))
+                nxt = trace[ci][cj_loc]
+                if nxt is None:
+                    break
+                ci, cj_loc = nxt
+
+            candidates.append((outer_val, pairs))
+
+    candidates.sort(key=lambda x: (x[0], -len(x[1])))
+    return candidates
+
+
+def _dimer_mfe(
+    seq1: str,
+    seq2: str | None = None,
+    *,
+    engine=None,
+    material: str = "dna",
+    celsius: float = 37.0,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
+):
+    """
+    Minimum free energy inter-strand duplex for two strands.
+
+    Returns an :class:`strider.thermo.engine.MFEResult` whose ``structure`` is
+    a dot-bracket string on ``seq1 + seq2`` (no ``&`` separator) and whose
+    ``base_pairs`` are sorted, 0-based, and satisfy ``i < len(seq1) <= j``.
+
+    This function remains a thin wrapper over :func:`_dimer_mfe_candidates` so
+    the DP fill is shared with :func:`dimer_thermo_subopt`.
+    """
+    from strider.thermo._param_context import param_context
+    from strider.thermo.engine import MFEResult
+
+    seq1 = seq1.upper().replace("U", "T")
+    if seq2 is None:
+        seq2 = seq1
+    else:
+        seq2 = seq2.upper().replace("U", "T")
+
+    n1 = len(seq1)
+    n2 = len(seq2)
+    seq = seq1 + seq2
+    n = n1 + n2
+
+    if n1 == 0 or n2 == 0:
+        return MFEResult(energy=0.0, structure="." * n, base_pairs=[], sequence=seq)
 
     override = None
     if engine is not None and getattr(engine, "_uses_custom_params", lambda: False)():
         override = engine.params
 
     with param_context(override):
-        energy, pairs = _run_dp()
+        candidates = _dimer_mfe_candidates(
+            seq1,
+            seq2,
+            engine=engine,
+            material=material,
+            celsius=celsius,
+            sodium_M=sodium_M,
+            magnesium_M=magnesium_M,
+        )
 
-    if not pairs:
+    if not candidates:
         return MFEResult(energy=0.0, structure="." * n, base_pairs=[], sequence=seq)
 
+    energy, pairs = candidates[0]
     pairs.sort()
     structure = _dotbracket(seq, pairs)
     return MFEResult(
@@ -245,6 +284,13 @@ def _dimer_mfe(
         base_pairs=pairs,
         sequence=seq,
     )
+
+
+def _dotbracket(seq: str, pairs: list[tuple[int, int]]) -> str:
+    s = ["."] * len(seq)
+    for i, j in pairs:
+        s[i], s[j] = "(", ")"
+    return "".join(s)
 
 
 def dimer_thermo(
@@ -348,6 +394,80 @@ def dimer_thermo(
     )
 
 
+def dimer_thermo_subopt(
+    seq1: str,
+    seq2: str | None = None,
+    *,
+    n: int = 5,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
+    material: str = "dna",
+    strand_conc_M: float = 250e-9,
+    salt_model: str = "auto",
+) -> list[DimerThermo]:
+    """
+    Return the top ``n`` sub-optimal antiparallel dimer alignments.
+
+    Each alignment is scored with the same two-state model as
+    :func:`dimer_thermo`.  Alignments are ranked by the closed-state DP energy
+    (``_outer_dangles + _terminal_pair_penalty + inner``) and ties are broken
+    by base-pair count (more pairs first).  Distinct start/end pairs are
+    reported individually; overlapping alignments are not collapsed.
+
+    Parameters
+    ----------
+    seq1, seq2 : strand sequences.  If ``seq2`` is omitted, ``seq1`` is folded
+        against itself as a self-dimer.
+    n : number of distinct alignments to return.
+    sodium_M, magnesium_M : ion concentrations (1 M Na⁺ / 0 Mg²⁺ = reference).
+    material : ``"dna"`` or ``"rna"``.
+    strand_conc_M : total strand concentration in molar.
+    salt_model : closed-state salt correction; see :func:`dimer_thermo`.
+    """
+    from strider.thermo._param_context import param_context
+    from strider.thermo.engine import ThermoEngine
+
+    seq1_clean = seq1.upper().replace("U", "T")
+    seq2_clean = seq2.upper().replace("U", "T") if seq2 is not None else seq1_clean
+    seq = seq1_clean + seq2_clean
+
+    engine = ThermoEngine(
+        material=material, celsius=25.0, sodium=sodium_M, magnesium=magnesium_M
+    )
+    override = engine.params if engine._uses_custom_params() else None
+
+    with param_context(override):
+        candidates = _dimer_mfe_candidates(seq1_clean, seq2_clean, engine=engine)
+
+    results: list[DimerThermo] = []
+    seen_outer: set[tuple[int, int]] = set()
+    for energy, pairs in candidates:
+        if len(results) >= n:
+            break
+        if len(pairs) < 2:
+            continue
+        outer = pairs[0]
+        if outer in seen_outer:
+            continue
+        seen_outer.add(outer)
+        pairs_sorted = sorted(pairs)
+        structure = _dotbracket(seq, pairs_sorted)
+        dt = dimer_thermo(
+            seq1_clean,
+            seq2_clean,
+            sodium_M=sodium_M,
+            magnesium_M=magnesium_M,
+            material=material,
+            structure=structure,
+            strand_conc_M=strand_conc_M,
+            salt_model=salt_model,
+        )
+        results.append(dt)
+
+    results.sort(key=lambda dt: dt.dG37)
+    return results
+
+
 def dimer_tm(
     seq1: str,
     seq2: str | None = None,
@@ -367,10 +487,3 @@ def dimer_tm(
         strand_conc_M=strand_conc_M,
         salt_model=salt_model,
     ).tm_celsius
-
-
-def _dotbracket(seq: str, pairs: list[tuple[int, int]]) -> str:
-    s = ["."] * len(seq)
-    for i, j in pairs:
-        s[i], s[j] = "(", ")"
-    return "".join(s)

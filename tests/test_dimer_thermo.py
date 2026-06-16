@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from strider import dimer_thermo, dimer_tm, DimerThermo
+from strider import dimer_thermo, dimer_thermo_subopt, dimer_tm, DimerThermo
 from strider.thermo.engine import ThermoEngine
 from strider.thermo.hairpin import hairpin_thermo
 from strider.thermo.salt import TAN_CHEN_MIN_BP
@@ -185,3 +185,52 @@ def test_heterodimer_regression_reasonable_thermo():
     assert "&" not in r.structure
     n1 = len(seq)
     assert all(i < n1 <= j for i, j in parse_dimer_pairs(r.structure, n1))
+
+
+class TestDimerThermoSubopt:
+    """Sub-optimal local dimer enumeration for the primer3 benchmark."""
+
+    PRIMER3_SEQ = "CAACAAGGTCCGTGAGCTTC"
+
+    @pytest.fixture
+    def subopt_results(self):
+        return dimer_thermo_subopt(
+            self.PRIMER3_SEQ,
+            n=5,
+            sodium_M=0.050,
+            magnesium_M=0.0092,
+            material="dna",
+            strand_conc_M=0.25e-6,
+            salt_model="auto",
+        )
+
+    def test_returns_five_results(self, subopt_results):
+        assert len(subopt_results) == 5
+        assert all(isinstance(r, DimerThermo) for r in subopt_results)
+
+    def test_sorted_by_dg37_ascending(self, subopt_results):
+        dg37s = [r.dG37 for r in subopt_results]
+        assert dg37s == sorted(dg37s)
+
+    def test_each_structure_is_valid_interstrand_helix(self, subopt_results):
+        n1 = len(self.PRIMER3_SEQ)
+        for r in subopt_results:
+            assert r.n_pairs >= 2
+            pairs = parse_dimer_pairs(r.structure, n1)
+            assert len(pairs) == r.n_pairs
+            assert all(i < n1 <= j for i, j in pairs)
+            assert "&" not in r.structure
+
+    def test_first_result_equals_dimer_thermo(self, subopt_results):
+        expected = dimer_thermo(
+            self.PRIMER3_SEQ,
+            sodium_M=0.050,
+            magnesium_M=0.0092,
+            material="dna",
+            strand_conc_M=0.25e-6,
+            salt_model="auto",
+        )
+        assert subopt_results[0] == expected
+
+    def test_self_dimer_flag_set(self, subopt_results):
+        assert all(r.is_self_dimer for r in subopt_results)
