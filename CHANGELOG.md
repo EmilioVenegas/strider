@@ -5,6 +5,35 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.6.0] - 2026-06-16
+
+### Features
+
+- **thermo:** Dedicated inter-strand dimer MFE + strand-aware MFE & sub-optimal enumeration (#4)
+
+    * feat(thermo): add bimolecular dimer Tm via dimer_thermo
+
+    - DimerThermo dataclass with tm_celsius, dH, dS, dG37
+
+    - structure walk for inter-strand helix with terminal penalties/dangles
+
+    - salt policy mirrors hairpin_thermo (Tan-Chen / per-bp)
+
+    - unit tests for perfect/hetero dimers, concentration dependence, salt policy
+
+    - engine + package exports; Oligool backend integration ready
+
+    * feat(thermo): add dedicated inter-strand dimer MFE via _dimer_mfe
+
+    Implement a DP over antiparallel strand alignments (blunt, staggered, single-base bulges) so dimer_thermo(structure=None) no longer relies on the native pseudo-hairpin cofold. The returned MFEResult uses the existing parse_dimer_pairs / structure_free_energy_dimer scoring path, leaving hairpin logic untouched.
+
+    * test(kinetics): skip mantis-dependent enumerator integration tests when optional dep absent
+
+    TestCRNetworkIntegration exercises mantis.CRNetwork, which is an optional peer dependency. Mark the class as skipped when mantis is not installed so CI stays green without the extra.
+
+    Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)
+
+
 ## [0.5.0] - 2026-06-16
 
 ### Features
