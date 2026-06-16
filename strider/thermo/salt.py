@@ -10,6 +10,8 @@ Sources:
 from __future__ import annotations
 import math
 
+_T_REF_K = 310.15  # 37 °C — reference temperature of the empirical salt fits
+
 
 def owczarzy_tm_correction(
     seq: str,
@@ -58,47 +60,62 @@ def na_correction_dg(seq: str, sodium_M: float, celsius: float = 37.0) -> float:
     return -dG_correction  # stabilizing when [Na+] > 1M
 
 
-def duplex_salt_dg(seq: str, sodium_M: float, magnesium_M: float = 0.0) -> float:
+def duplex_salt_dg(
+    seq: str, sodium_M: float, magnesium_M: float = 0.0, celsius: float = 37.0,
+    material: str = "dna",
+) -> float:
     """
     Whole-duplex salt ΔG correction (kcal/mol) relative to 1 M Na⁺ / 0 Mg²⁺.
 
-    Uses the *same* per-base-pair model the native McCaskill / Zuker DP applies
-    (:func:`dg_per_bp_salt`), summed over the duplex's base pairs:
-
-        ΔΔG = N · (−0.114 · ln([Na⁺] + 3.4·√[Mg²⁺]))      (N = len(seq) bp)
-
-    Benchmarked (2026-06-15, 6 duplexes × 4 [Na⁺]) against the Owczarzy-2004
-    experimental Tm fit: 2.41 °C ΔTm RMSE — statistically tied with the
-    per-helix Tan & Chen model (2.43 °C) and far better than the prior
-    per-phosphate correction (9.6 °C).  Using the per-bp term keeps the
-    two-state duplex, the ensemble, and the MFE engines on one salt model, folds
-    Mg²⁺ in via the √[Mg²⁺] combining rule, and imposes no minimum stem length.
-
-    Like :func:`dg_per_bp_salt` it is fit at 37 °C and carries no explicit
-    temperature dependence; at the 1 M Na⁺ / 0 Mg²⁺ reference it is exactly 0.
+    Sums the per-base-pair model the McCaskill / Zuker DP applies
+    (:func:`dg_per_bp_salt`) over the duplex's ``N = len(seq)`` base pairs, so the
+    two-state duplex, ensemble, and MFE engines share one salt model with no
+    minimum stem length.  Benchmarks to 2.4 °C ΔTm RMSE against the Owczarzy-2004
+    experimental fit.  Exactly 0 at the 1 M Na⁺ / 0 Mg²⁺ reference for every T.
     """
-    return len(seq) * dg_per_bp_salt(sodium_M, magnesium_M)
+    return len(seq) * dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
 
 
-def dg_per_bp_salt(sodium_M: float, magnesium_M: float = 0.0) -> float:
+# Per-base-pair monovalent salt coefficient (DNA), Owczarzy et al. 2004.
+_DG_PER_BP_NA = -0.114
+# RNA/DNA per-stack electrostatic ratio from the Tan & Chen 2007 TBI model
+# (`tan_chen_helix_dg`): RNA's tighter A-form helix (smaller axial charge spacing)
+# gives ~6% stronger counterion-release salt dependence than B-form DNA.  The
+# ratio is stable to <1% over [Na⁺] ∈ [0.05, 1] M, so a single scalar suffices.
+_RNA_SALT_FACTOR = 1.06
+
+
+def dg_per_bp_salt(
+    sodium_M: float, magnesium_M: float = 0.0, celsius: float = 37.0,
+    material: str = "dna",
+) -> float:
     """
     Per-base-pair ΔG salt correction (kcal/mol) relative to 1 M NaCl, 0 Mg²⁺.
 
-    Empirical Owczarzy-style fit (Owczarzy et al. 2004 Biochemistry
-    43:3537-3554; Owczarzy 2008 Biochemistry 47:5336-5353) over
-    Na⁺ ∈ [0.05, 1.0] M and Mg²⁺ ∈ [0, 0.1] M at 37 °C
-    (within ±0.005 kcal/mol per bp; see scratch/probe_salt.py):
+        ΔG_per_bp(T) = c · ln([Na⁺] + 3.4·√[Mg²⁺]) · T / T_ref     (T_ref = 310.15 K)
 
-        ΔG_per_bp = −0.114 · ln([Na⁺] + 3.4·√[Mg²⁺])
+    ``c`` is the empirical Owczarzy monovalent coefficient (Owczarzy et al. 2004
+    Biochemistry 43:3537-3554; 2008 47:5336-5353): −0.114 for DNA, scaled by
+    ``_RNA_SALT_FACTOR`` for RNA (Tan & Chen 2007). Mg²⁺ enters via the √[Mg²⁺]
+    combining rule.
 
-    Used by the McCaskill DP: each closed base pair contributes a
-    Boltzmann factor of exp(−ΔG_per_bp/RT) on top of its stack /
-    loop / hairpin energy.  At Na⁺=1 M, Mg²⁺=0 the correction is 0.
+    The polyelectrolyte salt dependence is entropic (counterion release; the
+    Manning/Record/SantaLucia framework places it in ΔS with ΔH_salt ≈ 0), so it
+    scales with absolute temperature: exactly 0 at the 1 M Na⁺ / 0 Mg²⁺ reference
+    for every T, and equal to the 37 °C value at ``T_ref``.
+
+    Applied per closed base pair by the DP as a Boltzmann factor
+    exp(−ΔG_per_bp/RT) on top of the stack / loop / hairpin energy; unpaired loop
+    backbones carry no separate length-dependent salt term.
     """
     effective_na = sodium_M + 3.4 * math.sqrt(max(magnesium_M, 0.0))
     if effective_na <= 0:
         return 0.0
-    return -0.114 * math.log(effective_na)
+    coeff = _DG_PER_BP_NA * (_RNA_SALT_FACTOR if material.lower() == "rna" else 1.0)
+    # Compute T/T_ref first so celsius == 37 is an exact ×1.0 (bit-identical to
+    # the legacy 37 °C value); folding it into the product would round it away.
+    frac = (celsius + 273.15) / _T_REF_K
+    return coeff * math.log(effective_na) * frac
 
 
 # Tan & Chen empirical helix salt model is fit for stems of 6–15 bp.

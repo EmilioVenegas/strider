@@ -5,6 +5,49 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.5.0] - 2026-06-16
+
+### Features
+
+- **thermo:** Implement temperature scaling for salt corrections
+
+    Update salt correction calculations to scale linearly with absolute
+    temperature, reflecting the entropic nature of counterion release.
+    This replaces the fixed 37 °C correction with a T-dependent model
+    that remains bit-identical at the 37 °C reference.
+
+- **thermo:** Temperature-resolve DNA external-loop dangle/TM via stk_decoration_tables
+- **thermo:** Add curated RNA dangle and terminal-mismatch enthalpies
+
+    Integrate Schroeder & Turner 2000 enthalpy tables for RNA dangles and
+    terminal mismatches. This replaces the previous fallback of ΔH = ΔG₃₇,
+    enabling accurate temperature extrapolation for these parameters
+    (resolves GAP-4).
+
+- **thermo:** Add full primer3 mismatch-stack parameters for DNA (#5)
+
+    Expand STACK (ΔG) and STACK_DH (ΔH) from 36 to 116 entries using
+    primer3/UNAFord stackmm.{ds,dh} tables (Allawi & SantaLucia 1997-1999).
+    WC stack ΔG values are preserved; mismatch entries are converted from
+    ΔH/TΔS at 310.15 K.
+
+    Includes scripts/generate_dna_stack_tables.py to regenerate both tables.
+
+- **thermo:** Add material-aware salt corrections for RNA and DNA
+
+    Introduces a `material` parameter to the salt correction functions to
+    distinguish between DNA and RNA. RNA salt dependence is scaled using the
+    Tan & Chen 2007 ratio to account for the tighter A-form helix, while
+    maintaining the Owczarzy 2004 baseline for DNA.
+
+- **thermo:** Make salt and dangle corrections temperature-resolved
+
+    Update salt corrections to be temperature-resolved and material-aware,
+    applying entropic scaling and DNA/RNA specific coefficients. Also
+    implement temperature resolution for dangles and terminal mismatches
+    to ensure thermodynamic consistency across the temperature range.
+
+
 ## [0.4.0] - 2026-06-16
 
 ### Bug Fixes

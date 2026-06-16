@@ -34,22 +34,32 @@ Two entry points:
   37 °C result bit-identical and confines the change to a genuine temperature
   shift.
 
-Scope / limitations (first pass; see DIMER_SALT_TEMP_PLAN.md §3):
+Scope / limitations:
 
-* The STK_* dangle / terminal-mismatch factors are precomputed 37 °C Boltzmann
-  factors not exposed via the schema, so they stay at 37 °C.  These are small
-  terminal corrections; the bulk (stacks, mismatches, loop initiation) is
-  extrapolated.
-* Tables without a curated ΔH (interior_1_1/1_2/2_2, dangles, terminal mismatch,
-  terminal penalty, coaxial, multiloop, asymmetry) degrade to ΔH = ΔG₃₇, i.e.
-  temperature-independent.
-* RNA loop-initiation ΔH is now curated from Turner-2004
+* The DNA external-loop STK_* dangle / terminal-mismatch decoration (the *live*
+  DNA dangle path — :func:`ensemble._apply_coaxial_external` overwrites the
+  exterior row, so the DANGLE_5/DANGLE_3 reads in ``_fill_dp`` are inert for DNA)
+  is now temperature-extrapolated outside this module, in
+  :func:`strider.thermo.parameters_dna.stk_decoration_tables`: each D5/D3 factor
+  is re-Boltzmannised from the dangle ΔH (Bommarito 2000), exact at 37 °C.  It is
+  not a ``ParameterSet`` table, so it does not appear in the override emitted here.
+* Tables without a curated ΔH (interior_1_1/1_2/2_2, terminal penalty, coaxial,
+  multiloop, asymmetry) degrade to ΔH = ΔG₃₇, i.e. temperature-independent.
+* RNA dangles/terminal-mismatch ride the inert-for-DNA ``DANGLE_*`` /
+  ``terminal_mismatch`` path (which *is* live for RNA) and are now curated from
+  the Schroeder & Turner 2000 enthalpies: the RNA branch below emits
+  ``dangle_5``/``dangle_3``/``terminal_mismatch`` with real ΔH, so they
+  extrapolate with temperature.
+* RNA loop-initiation ΔH is curated from Turner-2004
   (:mod:`strider.thermo._rna_enthalpy_generated`, ΔG-validated against the
   ``parameters_rna`` size arrays), so RNA hairpin/bulge/interior loops carry a
   real enthalpy — unlike DNA, where loop-init ΔH is genuinely zero.  RNA
-  terminal-mismatch / dangle ΔH remain uncurated (degrade to ΔH = ΔG₃₇).  The
-  separate two-state ``build_native_paramset`` RNA ``dH`` still uses the coarse
-  ΔG-copy and a divergent ``_INTERIOR`` table; the engine temperature path
+  dangle / terminal-mismatch ΔH are **also** curated now (Schroeder & Turner
+  2000): since :func:`ensemble._apply_coaxial_external` is DNA-only, RNA dangles
+  ride the live route-1 ``DANGLE_*`` DP path, so the ΔH is emitted into this
+  paramset (unlike DNA, whose dangle ΔH lives on the STK_* decoration instead).
+  The separate two-state ``build_native_paramset`` RNA ``dH`` still uses the
+  coarse ΔG-copy and a divergent ``_INTERIOR`` table; the engine temperature path
   (this function) is the curated one.
 """
 
@@ -165,11 +175,18 @@ def native_temperature_paramset(material: str, celsius: float) -> ParameterSet:
         from strider.thermo._rna_enthalpy_generated import (
             HAIRPIN_SIZE_DH, BULGE_SIZE_DH, INTERIOR_SIZE_DH,
             HAIRPIN_TRILOOP_DH, HAIRPIN_TETRALOOP_DH,
+            DANGLE_5_DH, DANGLE_3_DH, TERMINAL_MISMATCH_DH,
         )
         dict_tables = {
             "stack": (p.STACK, _stack_dh_rna()),
             "hairpin_triloop": (p.HAIRPIN_TRILOOP, HAIRPIN_TRILOOP_DH),
             "hairpin_tetraloop": (p.HAIRPIN_TETRALOOP, HAIRPIN_TETRALOOP_DH),
+            # RNA dangle/terminal-mismatch ride the live route-1 DP path
+            # (_apply_coaxial_external is DNA-only), so unlike DNA these *do* enter
+            # the paramset.  ΔH source: Schroeder & Turner 2000.
+            "dangle_5": (p.DANGLE_5, DANGLE_5_DH),
+            "dangle_3": (p.DANGLE_3, DANGLE_3_DH),
+            "terminal_mismatch": (p.TERMINAL_MISMATCH, TERMINAL_MISMATCH_DH),
         }
         # Unlike DNA, Turner-2004 RNA loop-initiation ΔH is non-zero (curated in
         # _rna_enthalpy_generated.py, ΔG-validated against these size arrays).
