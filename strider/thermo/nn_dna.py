@@ -102,7 +102,7 @@ def duplex_dg(
 
     if sodium_M != 1.0 or magnesium_M > 0:
         from strider.thermo.salt import duplex_salt_dg
-        dG += duplex_salt_dg(seq, sodium_M, magnesium_M)
+        dG += duplex_salt_dg(seq, sodium_M, magnesium_M, celsius)
 
     return dG
 

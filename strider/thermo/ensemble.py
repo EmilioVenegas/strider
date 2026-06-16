@@ -93,7 +93,7 @@ def ensemble_dg(
         Q[i][i + 1] = 1.0
 
     from strider.thermo.salt import dg_per_bp_salt
-    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
 
     _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks=[],
                    bp_salt_factor=bp_salt_factor, blocked=blocked)
@@ -715,7 +715,7 @@ def dangle_free_partition(sequence=None, celsius=37.0, material="dna",
         nicks = []
     T = celsius + 273.15
     pairs = _wc_pairs(material)
-    bp = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
     _, _, _, _, Znd = _pairs_dp(seq, T, material, pairs, nicks, bp, blocked)
     return Znd
 
@@ -893,7 +893,7 @@ def multistrand_pairs(
         Q[i][i + 1] = 1.0
 
     from strider.thermo.salt import dg_per_bp_salt
-    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
 
     _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks,
                    bp_salt_factor=bp_salt_factor)
@@ -959,7 +959,7 @@ def _multistrand_dg(
         Q[i][i + 1] = 1.0
 
     from strider.thermo.salt import dg_per_bp_salt
-    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
 
     _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks,
                    bp_salt_factor=bp_salt_factor)
