@@ -63,7 +63,7 @@ def fold_mfe(
     # once per pair, mirroring the bp_salt_factor applied once per Qb pair in the
     # ensemble DP; recursion makes the total scale with the number of pairs.
     from strider.thermo.salt import dg_per_bp_salt
-    dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius)
+    dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
     pairs_set = _wc_pairs(material)
     ml_a, ml_b, ml_c = _multiloop_params(material)
 

@@ -34,7 +34,7 @@ Two entry points:
   37 °C result bit-identical and confines the change to a genuine temperature
   shift.
 
-Scope / limitations (see DIMER_SALT_TEMP_PLAN.md §3, STRIDER_MODEL_GAP_ACTION_PLAN.md GAP-1):
+Scope / limitations:
 
 * The DNA external-loop STK_* dangle / terminal-mismatch decoration (the *live*
   DNA dangle path — :func:`ensemble._apply_coaxial_external` overwrites the
@@ -47,7 +47,7 @@ Scope / limitations (see DIMER_SALT_TEMP_PLAN.md §3, STRIDER_MODEL_GAP_ACTION_P
   multiloop, asymmetry) degrade to ΔH = ΔG₃₇, i.e. temperature-independent.
 * RNA dangles/terminal-mismatch ride the inert-for-DNA ``DANGLE_*`` /
   ``terminal_mismatch`` path (which *is* live for RNA) and are now curated from
-  the Schroeder & Turner 2000 enthalpies (GAP-4): the RNA branch below emits
+  the Schroeder & Turner 2000 enthalpies: the RNA branch below emits
   ``dangle_5``/``dangle_3``/``terminal_mismatch`` with real ΔH, so they
   extrapolate with temperature.
 * RNA loop-initiation ΔH is curated from Turner-2004
@@ -55,7 +55,7 @@ Scope / limitations (see DIMER_SALT_TEMP_PLAN.md §3, STRIDER_MODEL_GAP_ACTION_P
   ``parameters_rna`` size arrays), so RNA hairpin/bulge/interior loops carry a
   real enthalpy — unlike DNA, where loop-init ΔH is genuinely zero.  RNA
   dangle / terminal-mismatch ΔH are **also** curated now (Schroeder & Turner
-  2000, GAP-4): since :func:`ensemble._apply_coaxial_external` is DNA-only, RNA dangles
+  2000): since :func:`ensemble._apply_coaxial_external` is DNA-only, RNA dangles
   ride the live route-1 ``DANGLE_*`` DP path, so the ΔH is emitted into this
   paramset (unlike DNA, whose dangle ΔH lives on the STK_* decoration instead).
   The separate two-state ``build_native_paramset`` RNA ``dH`` still uses the
@@ -183,7 +183,7 @@ def native_temperature_paramset(material: str, celsius: float) -> ParameterSet:
             "hairpin_tetraloop": (p.HAIRPIN_TETRALOOP, HAIRPIN_TETRALOOP_DH),
             # RNA dangle/terminal-mismatch ride the live route-1 DP path
             # (_apply_coaxial_external is DNA-only), so unlike DNA these *do* enter
-            # the paramset.  ΔH: Schroeder & Turner 2000 (GAP-4 → completes GAP-1 for RNA).
+            # the paramset.  ΔH source: Schroeder & Turner 2000.
             "dangle_5": (p.DANGLE_5, DANGLE_5_DH),
             "dangle_3": (p.DANGLE_3, DANGLE_3_DH),
             "terminal_mismatch": (p.TERMINAL_MISMATCH, TERMINAL_MISMATCH_DH),

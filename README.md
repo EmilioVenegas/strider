@@ -7,7 +7,7 @@
 <p align="center"><em>Nucleic Acid Thermodynamics, Kinetics, and Circuit Design</em></p>
 
 <p align="center">
-<a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-445%20passed-brightgreen" alt="Tests"></a>
+<a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-527%20passed-brightgreen" alt="Tests"></a>
 <a href="#installation"><img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python"></a>
 <a href="#license"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License: MIT"></a>
 </p>
@@ -390,7 +390,8 @@ unsalted, ΔG₃₇ engine.
 seq = 'GCGCAAAAGCGC'
 
 # Salt: each closed base pair carries the per-bp correction dg_per_bp_salt =
-# −0.114·ln([Na⁺] + 3.4·√[Mg²⁺]). MFE, pfunc, and duplex_dg all shift together.
+# c·ln([Na⁺] + 3.4·√[Mg²⁺])  (c = −0.114 DNA, ×1.06 RNA; entropic, scales with T).
+# MFE, pfunc, and duplex_dg all shift together.
 for na, mg in [(1.0, 0.0), (0.05, 0.0), (0.05, 0.010)]:
     e = ThermoEngine('dna', sodium=na, magnesium=mg)
     print(f"[Na]={na} [Mg]={mg}: MFE={e.mfe(seq).energy:+.2f}  pfunc={e.pfunc(seq).free_energy:+.2f}")
@@ -419,10 +420,18 @@ Provenance and scope of the temperature extrapolation:
   1.3/4.8/−2.9…, bulge 10.6/7.1…, interior −7.2/−1.3 kcal/mol). The generator
   validates each loop-size ΔG against strider's own tables before grafting the
   ΔH, so the two stay on the same model.
-- **Left at 37 °C** (small, documented): the dangle / terminal-mismatch
-  Boltzmann factors (precomputed, not exposed via the parameter schema) and the
-  per-bp salt term (fit at 37 °C, anchored — revisit if validation shows a slope
-  error). RNA terminal-mismatch/dangle ΔH are likewise uncurated.
+- **Dangles / terminal mismatches** are temperature-resolved on both materials.
+  For DNA they live on the external-loop stacking-ensemble decoration, computed
+  as the standard all-dangles model from the literature dangle parameters
+  (Bommarito et al. 2000) and re-Boltzmannised at *T*; for RNA they ride the
+  parameter set with curated ΔH (Schroeder & Turner 2000). Both reduce to the
+  37 °C value exactly.
+- **Salt** is temperature-resolved too: the per-bp correction is entropic
+  (counterion release), so `ΔG_salt(T) = ΔG_salt(37 °C)·T/T_ref` — the same
+  `ΔH = 0` law as DNA loop initiation (see *Salt corrections* below).
+- **Still `ΔH = ΔG₃₇`** (small, no curated enthalpy): the exact small-interior-loop
+  tables (`interior_1_1/1_2/2_2`), terminal penalty, coaxial stacking, multiloop,
+  and asymmetry terms — temperature-independent until enthalpies are added.
 
 > The hairpin Tm path above uses the whole-helix Tan-Chen salt model; the folding
 > engine here uses the per-base-pair `dg_per_bp_salt` (the quantity the McCaskill
@@ -460,9 +469,9 @@ print(f"Toehold accessible in {prob:.1%} of ensemble")
 Salt corrections for non-1M NaCl and Mg²⁺ are applied automatically when `sodium ≠ 1.0` or `magnesium > 0`. Two distinct corrections are wired in:
 
 - **Duplex / melting temperature** — Owczarzy et al. (2004) for Na⁺ and Owczarzy et al. (2008) for Mg²⁺, with a mixed-ion regime from the √[Mg²⁺]/[Na⁺] ratio.
-- **Partition function / ensemble ΔG** — per-base-pair correction ``ΔG_per_bp = −0.114·ln([Na⁺] + 3.4·√[Mg²⁺])`` kcal/mol, applied to each closed pair inside the McCaskill DP so it is automatically ensemble-weighted by the pair probability. This is an Owczarzy-style empirical fit (Owczarzy 2004/2008) over Na⁺ ∈ [0.05, 1.0] M, Mg²⁺ ∈ [0, 0.1] M at ±0.005 kcal/mol/bp; see `strider.thermo.salt.dg_per_bp_salt`.
+- **Partition function / ensemble ΔG** — per-base-pair correction ``ΔG_per_bp(T) = c·ln([Na⁺] + 3.4·√[Mg²⁺])·T/T_ref`` kcal/mol, applied to each closed pair inside the McCaskill DP so it is automatically ensemble-weighted by the pair probability. ``c`` is an Owczarzy-style empirical fit (Owczarzy 2004/2008; Na⁺ ∈ [0.05, 1.0] M, Mg²⁺ ∈ [0, 0.1] M, ±0.005 kcal/mol/bp): **−0.114 for DNA, ×1.06 for RNA** (the Tan & Chen 2007 RNA/DNA per-stack ratio — RNA's tighter A-form helix gives ~6 % stronger counterion release). The dependence is entropic (counterion release, ΔH_salt ≈ 0), so it scales with absolute temperature. See `strider.thermo.salt.dg_per_bp_salt`.
 
-The two formulas serve different purposes (Tm uses the original Owczarzy Tm-shift form; pfunc needs a per-pair ΔG that integrates over the structural ensemble). Both reduce to zero at 1 M Na⁺ / 0 Mg²⁺, the SantaLucia/Turner reference state.
+The two formulas serve different purposes (Tm uses the original Owczarzy Tm-shift form; pfunc needs a per-pair ΔG that integrates over the structural ensemble). Both reduce to zero at 1 M Na⁺ / 0 Mg²⁺ — the SantaLucia/Turner reference state — for every temperature.
 
 #### Chemical modifications (LNA, 2′OMe, PS)
 
@@ -2119,7 +2128,7 @@ pip install -e .[dev]
 pytest tests/ -v
 ```
 
-The test suite has **445 tests, all green** (1 skipped — a torch/mantis-integration test when the optional dep is not installed; 4 `slow` benchmark / convergence tests deselected by default, run with `pytest -m slow`). No external thermodynamic tool is required to run the full suite.
+The test suite has **527 tests, all green** (1 skipped — a torch/mantis-integration test when the optional dep is not installed; 4 `slow` benchmark / convergence tests deselected by default, run with `pytest -m slow`). No external thermodynamic tool is required to run the full suite.
 
 | File | Tests | What is covered |
 |---|---|---|
@@ -2227,7 +2236,7 @@ The miRNA is released intact in the second reaction, allowing it to trigger addi
 
 strider applies three salt models, each matched to the calculation that consumes it (all anchored so 1 M Na⁺ / 0 Mg²⁺ is a no-op):
 
-- **Per-base-pair `dg_per_bp_salt`** = −0.114·ln([Na⁺] + 3.4·√[Mg²⁺]) — the *folding-engine* correction. It is a per-pair quantity, so the McCaskill / Zuker DP can add it to every closed base pair; this is what makes `mfe`, `pfunc`, and `duplex_dg` salt-aware. Fit at 37 °C (temperature-independent).
+- **Per-base-pair `dg_per_bp_salt`** = c·ln([Na⁺] + 3.4·√[Mg²⁺])·T/T_ref — the *folding-engine* correction. It is a per-pair quantity, so the McCaskill / Zuker DP can add it to every closed base pair; this is what makes `mfe`, `pfunc`, and `duplex_dg` salt-aware. c = −0.114 (DNA) or ×1.06 for RNA (Tan-Chen per-stack ratio); the dependence is entropic, so it scales with absolute temperature (exact 37 °C anchor).
 - **Tan-Chen (2007) tightly-bound-ion model** — the *hairpin-Tm* correction. A whole-helix quantity (needs the stem length *N*), it reproduces the experimental Mg²⁺ Tm slope on a DNA-beacon qPCR panel (0.71 vs measured ≈0.70 °C/mM) where the other two miss. Default for stems ≥ 6 bp; see *§2 Hairpin melting temperature*.
 - **Owczarzy (2004/2008)** — duplex-Tm corrections, selecting between Na⁺-only and Mg²⁺-only by √[Mg²⁺]/[Na⁺]. Used by the oligo `melting_temperature` path and selectable for hairpins (`salt_model="owczarzy"`); duplex-calibrated, so it over-shoots Mg²⁺ on short hairpin stems.
 

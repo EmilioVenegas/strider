@@ -145,7 +145,7 @@ def hairpin_thermo(
             salt_dg = tan_chen_helix_dg(n, sodium_M, magnesium_M, material)
             applied = "tan_chen"
         else:
-            salt_dg = n * dg_per_bp_salt(sodium_M, magnesium_M)
+            salt_dg = n * dg_per_bp_salt(sodium_M, magnesium_M, material=material)
             applied = "per_bp"
     dG37 = dG37_1M + salt_dg
     dS_kcal = (dH - dG37) / T_REF               # kcal/mol/K
