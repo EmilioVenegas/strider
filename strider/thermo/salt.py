@@ -23,17 +23,18 @@ def owczarzy_tm_correction(
     When both ions present, uses the Mg2+/Na+ ratio to select the regime.
     """
     fGC = _fgc(seq)
+    n_bp = len(seq)  # number of base pairs; enters the Owczarzy 2008 Mg term
 
     if magnesium_M > 0 and sodium_M > 0:
         ratio = math.sqrt(magnesium_M) / sodium_M
         if ratio < 0.22:
             return _na_correction(fGC, sodium_M)
         elif ratio < 6.0:
-            return _mixed_correction(fGC, sodium_M, magnesium_M)
+            return _mixed_correction(fGC, sodium_M, magnesium_M, n_bp)
         else:
-            return _mg_correction(fGC, magnesium_M)
+            return _mg_correction(fGC, magnesium_M, n_bp)
     elif magnesium_M > 0:
-        return _mg_correction(fGC, magnesium_M)
+        return _mg_correction(fGC, magnesium_M, n_bp)
     else:
         return _na_correction(fGC, sodium_M)
 
@@ -199,25 +200,37 @@ def _na_correction(fGC: float, sodium_M: float) -> float:
     return -inv_Tm_correction * Tm_ref ** 2
 
 
-def _mg_correction(fGC: float, mg_M: float) -> float:
-    """Owczarzy 2008 Eq. 16."""
+def _mg_correction(fGC: float, mg_M: float, n_bp: int) -> float:
+    """Owczarzy 2008 Eq. 16 (divalent Tm correction relative to 1 M Na⁺).
+
+    The published equation is
+
+        1/Tm(Mg) − 1/Tm(1M) = a + b·ln[Mg] + fGC·(c + d·ln[Mg])
+                              + 1/(2·(N_bp−1)) · (e + f·ln[Mg] + g·ln²[Mg])
+
+    where ``N_bp`` is the number of base pairs.  The ``1/(2·(N_bp−1))`` factor is
+    essential: the (e, f, g) length term dominates, so hardcoding ``N_bp = 2``
+    (the previous ``1/(2·1)``) over-weighted it by roughly ``N_bp−1`` and blew Tm
+    shifts up to tens of °C for normal-length oligos.
+    """
     ln_mg = math.log(mg_M)
     a, b, c, d, e, f, g = (
         3.92e-5, -9.11e-6, 6.26e-5, 1.42e-5,
         -4.82e-4, 5.25e-4, 8.31e-5,
     )
+    length_factor = 1.0 / (2.0 * max(n_bp - 1, 1))
     inv_Tm_corr = (
         a + b * ln_mg + fGC * (c + d * ln_mg)
-        + (1.0 / (2.0 * (1.0))) * (e + f * ln_mg + g * ln_mg ** 2)
+        + length_factor * (e + f * ln_mg + g * ln_mg ** 2)
     )
     Tm_ref = 340.0
     return -inv_Tm_corr * Tm_ref ** 2
 
 
-def _mixed_correction(fGC: float, sodium_M: float, magnesium_M: float) -> float:
+def _mixed_correction(fGC: float, sodium_M: float, magnesium_M: float, n_bp: int) -> float:
     """Owczarzy 2008 mixed-ion regime."""
     na_part = _na_correction(fGC, sodium_M)
-    mg_part = _mg_correction(fGC, magnesium_M)
+    mg_part = _mg_correction(fGC, magnesium_M, n_bp)
     ratio = math.sqrt(magnesium_M) / sodium_M
     alpha = (ratio - 0.22) / (6.0 - 0.22)
     return (1 - alpha) * na_part + alpha * mg_part
