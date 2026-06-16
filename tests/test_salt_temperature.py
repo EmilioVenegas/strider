@@ -276,6 +276,37 @@ class TestMonovalentSaltTemperature:
               - duplex_dg(seq, celsius=Tc, sodium_M=1.0) for Tc in (15, 37, 55, 70)]
         assert all(b > a for a, b in zip(dd, dd[1:]))
 
+    # ── GAP-5: material-aware per-bp salt ──────────────────────────────────────
+    def test_dna_unchanged_and_default(self):
+        # DNA keeps the validated Owczarzy −0.114 magnitude; default material = DNA.
+        import math
+        from strider.thermo.salt import dg_per_bp_salt
+        for na in (0.05, 0.1, 0.3):
+            assert dg_per_bp_salt(na, 0.0, 37.0, "dna") == -0.114 * math.log(na)
+            assert dg_per_bp_salt(na, 0.0, 37.0) == dg_per_bp_salt(na, 0.0, 37.0, "dna")
+
+    def test_rna_salt_scaled_by_tan_chen_ratio(self):
+        # RNA salt is the DNA magnitude × the Tan-Chen RNA/DNA per-stack ratio
+        # (~1.06): stronger than DNA, same sign, still 0 at the 1 M reference.
+        from strider.thermo.salt import dg_per_bp_salt, _RNA_SALT_FACTOR
+        assert _RNA_SALT_FACTOR == pytest.approx(1.06, abs=0.02)
+        for Tc in (25, 37, 55):
+            for na in (0.05, 0.15, 0.5):
+                r = dg_per_bp_salt(na, 0.0, Tc, "rna")
+                d = dg_per_bp_salt(na, 0.0, Tc, "dna")
+                assert r == pytest.approx(d * _RNA_SALT_FACTOR, rel=1e-12)
+                assert abs(r) > abs(d)            # RNA stronger
+            assert dg_per_bp_salt(1.0, 0.0, Tc, "rna") == 0.0   # ref still 0
+
+    def test_rna_ratio_matches_tan_chen_model(self):
+        # The hard-coded RNA factor reproduces strider's own Tan-Chen RNA/DNA
+        # per-stack ratio (its literature provenance) to ~1%.
+        from strider.thermo.salt import tan_chen_helix_dg, _RNA_SALT_FACTOR
+        for na in (0.05, 0.1, 0.2, 0.5):
+            ratio = (tan_chen_helix_dg(15, na, 0.0, "rna")
+                     / tan_chen_helix_dg(15, na, 0.0, "dna"))
+            assert ratio == pytest.approx(_RNA_SALT_FACTOR, abs=0.02)
+
     def test_ensemble_salt_boltzmann_factor_is_entropic(self):
         # Entropic salt ⇒ the per-pair partition-function weight exp(−ΔG_salt/RT)
         # is *temperature-independent* (= its 37 °C value), since ΔG_salt ∝ T.
