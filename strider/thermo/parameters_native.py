@@ -155,7 +155,6 @@ def build_native_paramset(material: str = "DNA") -> ParameterSet:
         "multiloop_init": 3.4,
         "multiloop_pair": 0.4,
         "multiloop_base": 0.0,
-        "join_penalty": 1.96,
         "log_loop_penalty": 1.07,
         **advanced,
     }
