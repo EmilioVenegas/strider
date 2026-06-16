@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use strider in your research, please cite it as below."
+title: "strider: open nucleic-acid thermodynamics, TMSD kinetics, and sequence design"
+abstract: >-
+  strider is a Python library for the thermodynamics and kinetics of DNA/RNA
+  circuits: nearest-neighbor free energies, Zuker/McCaskill secondary-structure
+  prediction, multi-strand tube equilibria, toehold-mediated strand-displacement
+  kinetics, reaction-network derivation, and gradient-based sequence design — with
+  an Na+ x Mg2+ x temperature salt model and no external thermodynamic
+  dependencies, under an MIT license.
+type: software
+authors:
+  - family-names: Venegas
+    given-names: Emilio
+    email: emiliovenegas10@gmail.com
+license: MIT
+repository-code: "https://github.com/EmilioVenegas/strider"
+url: "https://github.com/EmilioVenegas/strider"
+version: 0.6.0
+date-released: 2026-06-16
+keywords:
+  - nucleic-acid thermodynamics
+  - DNA computing
+  - toehold-mediated strand displacement
+  - RNA secondary structure
+  - sequence design
+  - nearest-neighbor model

@@ -107,10 +107,15 @@ def run_structure_benchmark(
     a ViennaRNA fold of the same sequence at the same temperature.
 
     A ``ThermoEngine`` may be passed in to control material / temperature /
-    salt; if omitted, a default DNA engine at 37 °C / 0.137 M Na⁺ is used
-    for DNA refs and an RNA engine at 37 °C for RNA refs.  Mixed-material
-    reference lists are handled by allocating one engine per material on
-    the fly.
+    salt; if omitted, engines are allocated per material at the **nearest-
+    neighbor reference state (37 °C, 1 M Na⁺, 0 Mg²⁺)** — the condition at
+    which the Turner/SantaLucia parameters *and* the reference structures are
+    defined.  Folding against those reference structures at the engine's
+    physiological salt default (0.137 M Na⁺ / 0.01 M Mg²⁺) would penalise
+    marginally-stable short hairpins below their reference-state stability and
+    is the wrong comparison for a structure-prediction benchmark.  Mixed-
+    material reference lists are handled by allocating one engine per material
+    on the fly.
     """
     from strider.thermo.engine import ThermoEngine
 
@@ -121,7 +126,9 @@ def run_structure_benchmark(
         if engine is not None and engine.material == material:
             return engine
         if material not in engines:
-            engines[material] = ThermoEngine(material=material, celsius=37.0)
+            engines[material] = ThermoEngine(
+                material=material, celsius=37.0, sodium=1.0, magnesium=0.0,
+            )
         return engines[material]
 
     vienna_avail = include_vienna and _has_vienna()

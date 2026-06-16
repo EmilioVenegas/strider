@@ -1,4 +1,4 @@
-<!-- Placeholder logo — replace docs/assets/logo.svg with final artwork (a transparent PNG/SVG both work). -->
+
 <p align="center">
   <img src="docs/assets/banner.png" alt="strider banner" width="1280">
 </p>
@@ -7,7 +7,8 @@
 <p align="center"><em>Nucleic Acid Thermodynamics, Kinetics, and Circuit Design</em></p>
 
 <p align="center">
-<a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-527%20passed-brightgreen" alt="Tests"></a>
+<a href="https://pypi.org/project/strider-dna/"><img src="https://img.shields.io/pypi/v/strider-dna" alt="PyPI"></a>
+<a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-477%20passed-brightgreen" alt="Tests"></a>
 <a href="#installation"><img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python"></a>
 <a href="#license"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License: MIT"></a>
 </p>
@@ -60,7 +61,8 @@ Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for mult
 10. [Troubleshooting](#troubleshooting)
 11. [Background and theory](#background-and-theory)
 12. [Citation](#citation)
-13. [License](#license)
+13. [API stability and versioning](#api-stability-and-versioning)
+14. [License](#license)
 
 ---
 
@@ -2125,10 +2127,11 @@ Reproduce with `python scripts/bench_mfe.py`.
 ```bash
 cd strider
 pip install -e .[dev]
-pytest tests/ -v
+pytest tests/ -v                      # default run: deselects the 4 `slow` tests
+pytest tests/ -m "slow or not slow"   # full run incl. slow accuracy gates
 ```
 
-The test suite has **527 tests, all green** (1 skipped — a torch/mantis-integration test when the optional dep is not installed; 4 `slow` benchmark / convergence tests deselected by default, run with `pytest -m slow`). No external thermodynamic tool is required to run the full suite.
+The full suite (`pytest -m "slow or not slow"`) is **477 passed, 1 xfailed, 17 skipped** in a clean environment. The skips are all optional peer dependencies — ViennaRNA (`RNA`), `mantis`, and `torch` (the `diff` extra); installing those extras converts the corresponding skips into passes. The 4 `slow` tests are deselected by `pytest` by default and include the CI-enforced structure-prediction F-measure gate (mean F ≥ 0.95 on the canonical hairpin set). No external thermodynamic tool is required to run the core suite.
 
 | File | Tests | What is covered |
 |---|---|---|
@@ -2248,20 +2251,47 @@ strider applies three salt models, each matched to the calculation that consumes
 
 ## Citation
 
-If you use strider-dna in published work, please cite:
+If you use strider-dna in published work, please cite it. Machine-readable
+metadata lives in [`CITATION.cff`](CITATION.cff); a BibTeX equivalent:
 
 ```bibtex
 @software{venegas2026strider,
   author  = {Venegas, Emilio},
-  title   = {strider-dna: Nucleic Acid Thermodynamics, Kinetics, and Circuit Design},
+  title   = {strider: Nucleic Acid Thermodynamics, Kinetics, and Circuit Design},
   year    = {2026},
   url     = {https://github.com/EmilioVenegas/strider},
-  version = {0.1.0}
+  version = {0.6.0}
 }
 ```
+
+---
+
+## API stability and versioning
+
+strider follows [semantic versioning](https://semver.org/): from 1.0 onward,
+breaking changes to the **stable** API bump the major version, and any
+deprecation ships with a one-minor-cycle warning before removal.
+
+**Stable** (semver-covered from 1.0): `ThermoEngine`, the `Tube` / `ComplexSet`
+equilibrium API, `solve_equilibrium` / `equilibrium_from_engine`, sequence
+design (`Assay` / `AssayPanel` / designer), kinetics (TMSD rates, enumerator),
+secondary-structure prediction (`mfe` / `pfunc` / `subopt` / `sample`), the
+circuit catalog, and the CLI.
+
+**Experimental** (may change without a major bump): `strider.surface` and
+`strider.surface.stochastic` (surface-tethered transduction), `strider.structure.quadruplex`
+(G-quadruplex model), and `strider.thermo.differentiable` / `strider.thermo.diff_design`
+(autodiff design). These are explicitly outside the semver contract until they
+stabilize.
 
 ---
 
 ## License
 
 MIT © 2026 Emilio Venegas
+
+All shipped thermodynamic parameters are physical constants drawn from the
+primary literature (SantaLucia & Hicks 2004 for DNA; Mathews 1999 / Turner 2004
+for RNA; Owczarzy and Tan–Chen for salt). No NUPACK or ViennaRNA code, data, or
+parameter files are redistributed. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+for full provenance of every external parameter source and build-time input.

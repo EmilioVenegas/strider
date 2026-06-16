@@ -28,6 +28,16 @@ jobs:
         pip install -e ".[diff]"
         pip install pytest
         
-    - name: Test with pytest
+    - name: Test with pytest (incl. slow accuracy gates)
       run: |
-        pytest tests/ -v
+        # Run the full suite including `slow` tests so the structure-prediction
+        # F-measure gate and other slow accuracy/convergence checks are enforced.
+        pytest tests/ -v -m "slow or not slow"
+
+    - name: Guard documented test count
+      run: |
+        # The README badge + "Running the tests" section claim a real count.
+        # Fail if collection drops well below it (catches silent badge rot).
+        COLLECTED=$(pytest tests/ -m "slow or not slow" --co -q 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1)
+        echo "Collected $COLLECTED tests"
+        test "$COLLECTED" -ge 490

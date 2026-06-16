@@ -1,4 +1,7 @@
 """
+[EXPERIMENTAL API — outside the semver contract until stabilized; see README
+"API stability and versioning".]
+
 Differentiable thermodynamic engine using PyTorch.
 
 This allows optimizing the nearest neighbor parameters using backpropagation.
