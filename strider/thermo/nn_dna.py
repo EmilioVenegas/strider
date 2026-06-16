@@ -60,17 +60,27 @@ def duplex_dg(
     complement: str | None = None,
     celsius: float = 37.0,
     sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
 ) -> float:
     """
-    ΔG (kcal/mol) of duplex formation at given temperature and [Na+].
+    ΔG (kcal/mol) of duplex formation at given temperature, [Na+], and [Mg2+].
 
-    seq        : top strand 5'→3'
-    complement : bottom strand 5'→3' (default: perfect complement of seq)
-    celsius    : temperature in Celsius
-    sodium_M   : [Na+] in molar (salt correction applied if ≠ 1.0)
+    seq         : top strand 5'→3'
+    complement  : bottom strand 5'→3' (default: perfect complement of seq)
+    celsius     : temperature in Celsius
+    sodium_M    : [Na+] in molar
+    magnesium_M : [Mg2+] in molar (folded in via the √[Mg2+] combining rule of
+                  :func:`strider.thermo.salt.dg_per_bp_salt`)
+
+    The salt correction is applied whenever ``sodium_M != 1.0`` or
+    ``magnesium_M > 0`` via :func:`strider.thermo.salt.duplex_salt_dg`
+    (``N · dg_per_bp_salt``) — the same per-base-pair model the native McCaskill
+    / Zuker DP uses, so this two-state path stays consistent with the folding
+    engine; at the 1 M Na+ / 0 Mg2+ reference it is 0.
 
     Returns the bimolecular association free energy (negative = stable duplex).
-    Reference: SantaLucia & Hicks 2004.
+    Reference: SantaLucia & Hicks 2004 (NN ΔH/ΔS); the per-bp salt term uses the
+    3.4·√[Mg2+] mono-/divalent combining rule (see ``salt.dg_per_bp_salt``).
     """
     seq = seq.upper().replace("U", "T")
     if complement is None:
@@ -90,9 +100,9 @@ def duplex_dg(
 
     dG = dH - T * (dS / 1000.0)  # dS: cal → kcal
 
-    if sodium_M != 1.0:
-        from strider.thermo.salt import na_correction_dg
-        dG += na_correction_dg(seq, sodium_M, celsius)
+    if sodium_M != 1.0 or magnesium_M > 0:
+        from strider.thermo.salt import duplex_salt_dg
+        dG += duplex_salt_dg(seq, sodium_M, magnesium_M)
 
     return dG
 

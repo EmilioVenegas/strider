@@ -5,6 +5,51 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.4.0] - 2026-06-16
+
+### Bug Fixes
+
+- **thermo:** Fix Mg correction in Owczarzy Tm calculation
+
+    Pass the actual sequence length to the magnesium correction functions
+    instead of using a hardcoded value. This corrects an over-weighted
+    length term that caused significant Tm errors for normal-length oligos.
+
+
+### Documentation
+
+- Document PyTorch-based differentiable thermodynamics and the new diff installation extra
+- Document salt and temperature propagation in folding engine
+
+    Add a detailed section explaining how sodium, magnesium, and celsius
+    parameters propagate through the folding engine (MFE, pfunc, duplex).
+    Clarify the distinctions between the per-bp salt correction and the
+    whole-helix models used for Tm calculations, including provenance.
+
+
+### Features
+
+- **thermo:** Add magnesium support to duplex ΔG calculations
+
+    Implement duplex_salt_dg using the √[Mg2+] combining rule to account
+    for divalent cations. This aligns the two-state duplex stability
+    model with the per-base-pair salt corrections used by the main
+    folding engine.
+
+- **thermo:** Add Owczarzy salt model for hairpin thermodynamics
+
+    Implement the "owczarzy" salt model by grafting the GC-aware Owczarzy
+    Tm shift onto the hairpin stem. This adds a new closed-state ΔG
+    offset calculation that reproduces the Owczarzy ΔTm relative to the
+    1 M Na+ reference.
+
+- **thermo:** Add salt to native MFE and temperature-blended ParameterSet
+
+    Thread [Na+]/[Mg2+] through fold_mfe (per-bp dg_per_bp_salt on each closed
+    pair) and add a temperature-blended ParameterSet (DNA+RNA loop-init ΔH) via
+    _param_override. 37 °C / 1 M Na+ / 0 Mg2+ stays bit-identical.
+
+
 ## [0.3.4] - 2026-06-14
 
 ### Bug Fixes
