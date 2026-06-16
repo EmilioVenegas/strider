@@ -24,6 +24,12 @@ from strider.thermo.temperature import (
     blend_paramset, native_temperature_paramset, T_REF_K,
 )
 
+# Real (un-monkeypatched) STK decoration fn, captured at import so the
+# "frozen at 37 °C" baseline in TestStackingEnsembleTemperature can call it
+# without recursing into its own monkeypatch of pd.stk_decoration_tables.
+import strider.thermo.parameters_dna as _pd_stk
+_REAL_STK_TABLES = _pd_stk.stk_decoration_tables
+
 H1 = "TCAACATCAGTCTGATACCTCCCTCCTTATCAGACTGA"
 
 
