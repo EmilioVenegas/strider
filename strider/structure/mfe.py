@@ -27,6 +27,8 @@ def fold_mfe(
     sequence: str,
     celsius: float = 37.0,
     material: str = "dna",
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
 ) -> tuple[str, float, list[tuple[int, int]]]:
     """
     Predict the MFE secondary structure for a single strand.
@@ -36,6 +38,14 @@ def fold_mfe(
     sequence : nucleotide sequence (case-insensitive, U/T interchangeable).
     celsius  : temperature in °C (default 37).
     material : ``"dna"`` or ``"rna"``.
+    sodium_M : [Na⁺] in molar (default 1.0 = SantaLucia/Turner reference).
+    magnesium_M : [Mg²⁺] in molar (default 0.0).
+
+    Salt correction: each closed base pair contributes the per-base-pair ΔG
+    shift of :func:`strider.thermo.salt.dg_per_bp_salt` — the same term the
+    McCaskill ensemble DP folds into ``Qb`` — so MFE energies track [Na⁺]/[Mg²⁺]
+    consistently with :func:`strider.thermo.ensemble.ensemble_dg`.  At 1 M Na⁺,
+    0 Mg²⁺ the correction is exactly 0 and the result is unchanged.
 
     Returns
     -------
@@ -49,6 +59,11 @@ def fold_mfe(
         return "", 0.0, []
 
     T = celsius + 273.15
+    # Per-closed-base-pair salt ΔG (0 at the 1 M Na⁺ reference).  Added to V[i,j]
+    # once per pair, mirroring the bp_salt_factor applied once per Qb pair in the
+    # ensemble DP; recursion makes the total scale with the number of pairs.
+    from strider.thermo.salt import dg_per_bp_salt
+    dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius)
     pairs_set = _wc_pairs(material)
     ml_a, ml_b, ml_c = _multiloop_params(material)
 
@@ -101,7 +116,7 @@ def fold_mfe(
                         if cand < v_best:
                             v_best = cand
 
-                V[i][j] = v_best
+                V[i][j] = v_best + dg_salt
 
             # WM1[i,j]: multi-loop fragment containing exactly one branch ending at j
             wm1_best = INF
@@ -141,7 +156,7 @@ def fold_mfe(
     # Traceback
     pairs: list[tuple[int, int]] = []
     _traceback_W(W, V, WM, WM1, seq, 0, n - 1, T, pairs,
-                 hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                 hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
     pairs.sort()
 
     energy = float(W[0][n - 1]) if n > 1 else 0.0
@@ -152,7 +167,7 @@ def fold_mfe(
 # ─── traceback ────────────────────────────────────────────────────────────────
 
 def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
-                 can, ml_a, ml_b, ml_c):
+                 can, ml_a, ml_b, ml_c, dg_salt):
     """Recover the base-pair list achieving W[i..j] by following the recurrences."""
     if j <= i:
         return
@@ -162,14 +177,14 @@ def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
     left_w = W[i][j - 1] if j > i else 0.0
     if abs(target - left_w) < 1e-9:
         _traceback_W(W, V, WM, WM1, seq, i, j - 1, T, out,
-                     hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                     hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
         return
 
     # (i,j) is the outer pair
     if abs(target - V[i][j]) < 1e-9:
         out.append((i, j))
         _traceback_V(V, WM, WM1, seq, i, j, T, out,
-                     hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                     hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
         return
 
     # Split point k: W[i..k] + V[k+1..j]
@@ -178,17 +193,20 @@ def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
         if V[k + 1][j] < INF and abs(target - (left + V[k + 1][j])) < 1e-9:
             if k > i:
                 _traceback_W(W, V, WM, WM1, seq, i, k, T, out,
-                             hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                             hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
             out.append((k + 1, j))
             _traceback_V(V, WM, WM1, seq, k + 1, j, T, out,
-                         hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                         hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
             return
 
 
 def _traceback_V(V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
-                 can, ml_a, ml_b, ml_c):
+                 can, ml_a, ml_b, ml_c, dg_salt):
     """Recover the base-pair decomposition of V[i,j] (forced pair at (i,j))."""
-    target = V[i][j]
+    # V[i,j] carries one ``dg_salt`` for the (i,j) pair itself; strip it so the
+    # candidate energies below (which reference inner V values that already
+    # include their own salt terms) compare exactly.
+    target = V[i][j] - dg_salt
 
     # Hairpin
     if abs(target - hairpin_e(seq, i, j, T)) < 1e-9:
@@ -200,7 +218,7 @@ def _traceback_V(V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
         if abs(target - cand) < 1e-9:
             out.append((i + 1, j - 1))
             _traceback_V(V, WM, WM1, seq, i + 1, j - 1, T, out,
-                         hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                         hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
             return
 
     # Internal loop / bulge
@@ -220,7 +238,7 @@ def _traceback_V(V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
             if abs(target - cand) < 1e-9:
                 out.append((ip, jp))
                 _traceback_V(V, WM, WM1, seq, ip, jp, T, out,
-                             hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                             hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
                 return
 
     # Multi-loop
@@ -229,48 +247,48 @@ def _traceback_V(V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
             cand = ml_a + ml_b + WM[i + 1][k] + WM1[k + 1][j - 1]
             if abs(target - cand) < 1e-9:
                 _traceback_WM(V, WM, WM1, seq, i + 1, k, T, out,
-                              hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                              hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
                 _traceback_WM1(V, WM, WM1, seq, k + 1, j - 1, T, out,
-                               hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                               hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
                 return
 
 
 def _traceback_WM1(V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
-                   can, ml_a, ml_b, ml_c):
+                   can, ml_a, ml_b, ml_c, dg_salt):
     """Recover the single-branch multi-loop fragment WM1[i,j]."""
     target = WM1[i][j]
     if V[i][j] < INF and abs(target - (V[i][j] + ml_b)) < 1e-9:
         out.append((i, j))
         _traceback_V(V, WM, WM1, seq, i, j, T, out,
-                     hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                     hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
         return
     if j > i and WM1[i][j - 1] < INF:
         if abs(target - (WM1[i][j - 1] + ml_c)) < 1e-9:
             _traceback_WM1(V, WM, WM1, seq, i, j - 1, T, out,
-                           hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                           hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
             return
 
 
 def _traceback_WM(V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
-                  can, ml_a, ml_b, ml_c):
+                  can, ml_a, ml_b, ml_c, dg_salt):
     """Recover the multi-loop fragment WM[i,j] (≥1 branch)."""
     target = WM[i][j]
     if abs(target - WM1[i][j]) < 1e-9:
         _traceback_WM1(V, WM, WM1, seq, i, j, T, out,
-                       hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                       hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
         return
     if j > i and WM[i][j - 1] < INF and abs(target - (WM[i][j - 1] + ml_c)) < 1e-9:
         _traceback_WM(V, WM, WM1, seq, i, j - 1, T, out,
-                      hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                      hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
         return
     for k in range(i, j):
         if WM[i][k] < INF and WM1[k + 1][j] < INF:
             cand = WM[i][k] + WM1[k + 1][j]
             if abs(target - cand) < 1e-9:
                 _traceback_WM(V, WM, WM1, seq, i, k, T, out,
-                              hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                              hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
                 _traceback_WM1(V, WM, WM1, seq, k + 1, j, T, out,
-                               hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c)
+                               hairpin_e, stack_e, il_e, can, ml_a, ml_b, ml_c, dg_salt)
                 return
 
 

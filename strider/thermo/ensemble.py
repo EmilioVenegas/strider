@@ -93,7 +93,7 @@ def ensemble_dg(
         Q[i][i + 1] = 1.0
 
     from strider.thermo.salt import dg_per_bp_salt
-    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
 
     _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks=[],
                    bp_salt_factor=bp_salt_factor, blocked=blocked)
@@ -515,13 +515,13 @@ def _apply_coaxial_external(seq: str, Q: np.ndarray, Qb: np.ndarray, n: int, T: 
     if material != "dna":
         return
     from strider.thermo._param_context import lookup_table
-    from strider.thermo.parameters_dna import (
-        COAXIAL_STACK,
-        STK_BARE_FACTOR, STK_D5_DELTA, STK_D3_DELTA, STK_TM_DELTA,
-    )
-    # STK_* tables are precomputed Boltzmann factors derived from DANGLE_5 /
-    # DANGLE_3 / TERMINAL_MISMATCH at 37 °C — they are not exposed via the
-    # ParameterSet schema, so an override is permitted only for COAXIAL_STACK.
+    from strider.thermo.parameters_dna import COAXIAL_STACK, stk_decoration_tables
+    # STK_* are the 37 °C stacking-ensemble decoration factors (see their provenance
+    # header in parameters_dna); stk_decoration_tables re-extrapolates D5/D3 toward
+    # the Bommarito-2000 dangle ΔH (TM = D5·D3) at T, returning the baked dicts
+    # verbatim at 37 °C.  They are not exposed via the ParameterSet schema, so an
+    # override is permitted only for COAXIAL_STACK.
+    STK_BARE_FACTOR, STK_D5_DELTA, STK_D3_DELTA, STK_TM_DELTA = stk_decoration_tables(T)
     COAXIAL_STACK = lookup_table("coaxial_stack", COAXIAL_STACK)
 
     BASE_LIST = ['A', 'T', 'G', 'C']
@@ -715,7 +715,7 @@ def dangle_free_partition(sequence=None, celsius=37.0, material="dna",
         nicks = []
     T = celsius + 273.15
     pairs = _wc_pairs(material)
-    bp = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
     _, _, _, _, Znd = _pairs_dp(seq, T, material, pairs, nicks, bp, blocked)
     return Znd
 
@@ -893,7 +893,7 @@ def multistrand_pairs(
         Q[i][i + 1] = 1.0
 
     from strider.thermo.salt import dg_per_bp_salt
-    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
 
     _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks,
                    bp_salt_factor=bp_salt_factor)
@@ -959,7 +959,7 @@ def _multistrand_dg(
         Q[i][i + 1] = 1.0
 
     from strider.thermo.salt import dg_per_bp_salt
-    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M), T)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius), T)
 
     _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks,
                    bp_salt_factor=bp_salt_factor)

@@ -3434,154 +3434,87 @@ INTERIOR_2_2: dict[str, float] = {
     "TTTTGTGA": 2.8,  "TTTTGTGG": 2.9,  "TTTTGTTA": 2.3,  "TTTTGTTG": 2.7,
 }
 
-# ── Stacking-ensemble external-loop decoration tables ─────────────────────────
-# Per-helix decoration Boltzmann factors for the "stacking ensemble" partition
-# function on external loops. Each helix terminus pair sums four mutually
-# exclusive decoration states (Mathews-style):
-#     NONE   — no adjacent unpaired base used as decoration
-#     D5     — 5'-side single base stacks as a dangle (Bommarito et al. 2000)
-#     D3     — 3'-side single base stacks as a dangle (Bommarito et al. 2000)
-#     TM     — both flanking bases combine as a terminal mismatch
-#              (SantaLucia & Hicks 2004 terminal-mismatch parameters)
+# ── Stacking-ensemble external-loop decoration (all-dangles model) ────────────
+# External-loop helix termini are decorated with the standard "all dangles" model
+# (Mathews D.H., Sabina J., Zuker M., Turner D.H. 1999, J. Mol. Biol. 288:911-940
+# §4; the ViennaRNA dangles=2 / mfold treatment) — computed at run time by
+# :func:`stk_decoration_tables` directly from the literature DANGLE_5 / DANGLE_3
+# tables above (Bommarito, Peyret & SantaLucia 2000, Nucleic Acids Res. 28:1929).
 #
-# Stacking ensemble formulation:
-#     Mathews D.H., Sabina J., Zuker M., Turner D.H. (1999).
-#         J. Mol. Biol. 288: 911-940.
-#     Lu Z.J., Turner D.H., Mathews D.H. (2006). Nucleic Acids Res. 34:4912-4924
-#         (per-helix decoration sum: NONE + D5 + D3 + TM).
-#     Dirks R.M. & Pierce N.A. (2003). J. Comput. Chem. 24: 1664-1677
-#         (partition-function DP over decoration states).
+# Each external-loop helix terminus sums mutually-exclusive decoration states; the
+# DP (:func:`ensemble._apply_coaxial_external`) multiplies the stem's Qb by:
+#     NONE : STK_BARE_FACTOR[xy]   = 1
+#     D5   : STK_D5_DELTA[xyn]     = exp(-ΔG_d5 / RT)            (5'-flank n)
+#     D3   : STK_D3_DELTA[myx]     = exp(-ΔG_d3 / RT)            (3'-flank m)
+#     TM   : STK_TM_DELTA[nxym]    = STK_D5_DELTA[xyn] · STK_D3_DELTA[myx]
+# so the both-flanks partition is (1 + D5)(1 + D3): the two dangles stack
+# independently (the all-dangles product), not as a coupled terminal mismatch.
+# ΔG_d{5,3}(T) is the two-state blend of the dangle ΔG (DANGLE_*) toward its ΔH
+# (DANGLE_*_DH, Bommarito 2000), so the decoration is temperature-correct; at
+# 37 °C it reduces to exp(-ΔG₃₇ / R·310.15).
 #
-# The numerical values below are derived from the underlying SantaLucia-style
-# DNA NN parameters (DANGLE_5, DANGLE_3, TERMINAL_MISMATCH defined above) by
-# the algebraic Boltzmann re-organization described in the references; they
-# carry no information beyond those tables.
-#
-# All values are dimensionless Boltzmann factors (not kcal/mol).
-#
-# DP usage in _apply_coaxial_external:
-#   bm_total_no_flanks   = STK_BARE_FACTOR[xy]                  (= 1.0)
-#   bm_total_d5_flank    = 1 + STK_D5_DELTA[xyn]
-#   bm_total_d3_flank    = 1 + STK_D3_DELTA[myx]
-#   bm_total_both_flanks = 1 + d5_delta + d3_delta + STK_TM_DELTA[nxym]
-# The "all dangles" decoration model (Mathews et al. 1999, Lu et al. 2006)
-# applies dangles independently at each end: Z_both = (1+b5)*(1+b3).
-# That expands to 1 + b5 + b3 + b5*b3, so STK_TM_DELTA stores b5*b3 — every
-# entry equals STK_D5_DELTA[xyn] * STK_D3_DELTA[myx] at the matching key
-# (verified by exhaustive comparison; scratch/tm_formula_test.py).
+# (Earlier releases baked these factors from a stacking-ensemble fit of an external
+# tool; they are now derived purely from the SantaLucia/Bommarito literature
+# dangles — no external-tool dependency — which also matches the model documented
+# here. The DP keeps a `.get(key, 1.0/0.0)` default, so GT/TG wobble closing pairs,
+# which DNA exterior loops never form, are simply absent.)
 STK_BARE_FACTOR: dict[str, float] = {
     "AT": 1.0, "TA": 1.0, "GC": 1.0, "CG": 1.0,
 }
 
-# STK_D5_DELTA[xyn]: Boltzmann delta ABOVE the bare factor when a 5'-flanking
-#   base n is present on stem with closing pair (x,y).
-#   Key: seq[k] + seq[j] + seq[k-1]  (same layout as DANGLE_5).
-STK_D5_DELTA: dict[str, float] = {
-    "ATA": 2.287907,
-    "ATC": 1.977046,
-    "ATG": 2.734979,
-    "ATT": 3.165016,
-    "CGA": 4.748418,
-    "CGC": 2.325334,
-    "CGG": 3.216791,
-    "CGT": 2.563105,
-    "GCA": 2.563105,
-    "GCC": 1.736370,
-    "GCG": 2.481262,
-    "GCT": 2.690959,
-    "TAA": 2.251083,
-    "TAC": 1.033106,
-    "TAG": 0.458997,
-    "TAT": 1.176303,
-}
+import math as _math
+from functools import lru_cache as _lru_cache
 
-# STK_D3_DELTA[myx]: Boltzmann delta ABOVE the bare factor when a 3'-flanking
-#   base m is present (stem is (k,j-1), dangle is at j).
-#   Key: seq[j] + seq[j-1] + seq[k]  (same layout as DANGLE_3).
-STK_D3_DELTA: dict[str, float] = {
-    "AAT": 1.215102,
-    "ACG": 3.783484,
-    "AGC": 4.450012,
-    "ATA": 2.179204,
-    "CAT": 0.634955,
-    "CCG": 1.653871,
-    "CGC": 1.452537,
-    "CTA": 1.361257,
-    "GAT": 1.016479,
-    "GCG": 1.016479,
-    "GGC": 2.042257,
-    "GTA": 2.251083,
-    "TAT": 0.809923,
-    "TCG": 2.325334,
-    "TGC": 1.764774,
-    "TTA": 1.601062,
-}
+_R_KCAL = 1.987e-3   # kcal / (mol · K)
+_T_REF_K = 310.15    # 37 °C — reference temperature of the DANGLE ΔG tables
+_WC_PAIRS = frozenset({"AT", "TA", "GC", "CG"})
+_BASES = "ACGT"
 
-# STK_TM_DELTA[nxym]: residual TM Boltzmann delta above (bare + d5 + d3).
-#   Key: seq[k-1] + seq[k] + seq[j-1] + seq[j]  (same layout as TERMINAL_MISMATCH).
-STK_TM_DELTA: dict[str, float] = {
-    "AATA":  4.985816,
-    "AATC":  3.114430,
-    "AATG":  5.150269,
-    "AATT":  3.663081,
-    "ACGA": 21.130519,
-    "ACGC":  6.897255,
-    "ACGG":  9.697492,
-    "ACGT":  8.379883,
-    "AGCA":  9.697468,
-    "AGCC":  4.239046,
-    "AGCG":  2.605342,
-    "AGCT":  5.960075,
-    "ATAA":  2.735295,
-    "ATAC":  1.429337,
-    "ATAG":  2.288178,
-    "ATAT":  1.823205,
-    "CATA":  4.308386,
-    "CATC":  2.691268,
-    "CATG":  4.450495,
-    "CATT":  3.165373,
-    "CCGA": 10.347763,
-    "CCGC":  3.377634,
-    "CCGG":  4.748930,
-    "CCGT":  4.103687,
-    "CGCA":  6.569527,
-    "CGCC":  2.871732,
-    "CGCG":  1.764983,
-    "CGCT":  4.037638,
-    "CTAA":  1.255329,
-    "CTAC":  0.655976,
-    "CTAG":  1.050131,
-    "CTAT":  0.836737,
-    "GATA":  5.960076,
-    "GATC":  3.723009,
-    "GATG":  6.156664,
-    "GATT":  4.378870,
-    "GCGA": 14.314758,
-    "GCGC":  4.672509,
-    "GCGG":  6.569515,
-    "GCGT":  5.676907,
-    "GGCA":  9.387817,
-    "GGCC":  4.103689,
-    "GGCG":  2.522150,
-    "GGCT":  5.769763,
-    "GTAA":  0.557728,
-    "GTAC":  0.291442,
-    "GTAG":  0.466560,
-    "GTAT":  0.371752,
-    "TATA":  6.897215,
-    "TATC":  4.308400,
-    "TATG":  7.124715,
-    "TATT":  5.067386,
-    "TCGA": 11.405849,
-    "TCGC":  3.723006,
-    "TCGG":  5.234521,
-    "TCGT":  4.523300,
-    "TGCA": 10.181200,
-    "TGCC":  4.450500,
-    "TGCG":  2.735302,
-    "TGCT":  6.257377,
-    "TTAA":  1.429328,
-    "TTAC":  0.746900,
-    "TTAG":  1.195687,
-    "TTAT":  0.952715,
-}
+
+@_lru_cache(maxsize=64)
+def stk_decoration_tables(
+    T_kelvin: float,
+) -> "tuple[dict, dict, dict, dict]":
+    """External-loop "all-dangles" decoration Boltzmann factors at ``T_kelvin``.
+
+    Returns ``(STK_BARE_FACTOR, STK_D5_DELTA, STK_D3_DELTA, STK_TM_DELTA)`` — the
+    four tables :func:`ensemble._apply_coaxial_external` consumes — computed from
+    the literature DANGLE_5 / DANGLE_3 ΔG (Bommarito 2000) blended toward their ΔH
+    (``_dna_enthalpy_generated.DANGLE_{5,3}_DH``) and Boltzmann-weighted at ``T``::
+
+        ΔG_d(T)          = ΔG₃₇·(T/T_ref) + ΔH·(1 − T/T_ref)      (ΔCp = 0)
+        STK_D5_DELTA[xyn] = exp(-ΔG_d5(T) / RT)
+        STK_D3_DELTA[myx] = exp(-ΔG_d3(T) / RT)
+        STK_TM_DELTA[nxym] = STK_D5_DELTA[xyn] · STK_D3_DELTA[myx]   (independent dangles)
+        STK_BARE_FACTOR[xy] = 1
+
+    Only Watson–Crick closing pairs (AT/TA/GC/CG) are emitted — DNA exterior loops
+    never close on a GT/TG wobble.  At ``T_kelvin == T_ref`` the D5/D3 factors are
+    exactly ``exp(-ΔG₃₇ / R·T_ref)``.  Same ``ΔH = 0 ⇒ ΔG ∝ T`` extrapolation as
+    :mod:`strider.thermo.temperature`; cached per temperature.
+    """
+    from strider.thermo._dna_enthalpy_generated import DANGLE_5_DH, DANGLE_3_DH
+
+    frac = T_kelvin / _T_REF_K
+    rt = _R_KCAL * T_kelvin
+
+    def _weight(dg37: float, dh: "float | None") -> float:
+        dg_t = dg37 * frac + (dg37 if dh is None else dh) * (1.0 - frac)
+        return _math.exp(-dg_t / rt)
+
+    d5 = {k: _weight(v, DANGLE_5_DH.get(k))
+          for k, v in DANGLE_5.items() if k[:2] in _WC_PAIRS}
+    d3 = {k: _weight(v, DANGLE_3_DH.get(k))
+          for k, v in DANGLE_3.items() if k[2] + k[1] in _WC_PAIRS}
+    tm: dict[str, float] = {}
+    for xy in ("AT", "TA", "GC", "CG"):
+        x, y = xy
+        for n in _BASES:
+            d5k = x + y + n
+            if d5k not in d5:
+                continue
+            for m in _BASES:
+                d3k = m + y + x
+                if d3k in d3:
+                    tm[n + x + y + m] = d5[d5k] * d3[d3k]
+    return STK_BARE_FACTOR, d5, d3, tm

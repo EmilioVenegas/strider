@@ -86,9 +86,12 @@ def hairpin_thermo(
         (:func:`strider.thermo.salt.tan_chen_helix_dg`) for stems ≥
         ``TAN_CHEN_MIN_BP`` bp and falls back to the per-base-pair model below
         that; ``"tan_chen"`` forces Tan-Chen (raises on too-short stems);
-        ``"per_bp"`` forces the per-base-pair :func:`dg_per_bp_salt`.
-        Tan-Chen reproduces the experimental Mg²⁺ Tm slope (~0.7 °C/mM) where the
-        per-bp/Owczarzy models under-/over-shoot — see the README benchmark.
+        ``"per_bp"`` forces the per-base-pair :func:`dg_per_bp_salt`;
+        ``"owczarzy"`` grafts the GC-aware Owczarzy 2004/2008 ΔTm of the *stem*
+        onto the hairpin (see :func:`_owczarzy_salt_dg`).  Tan-Chen reproduces the
+        experimental Mg²⁺ Tm slope (~0.7 °C/mM) where the per-bp model under-shoots
+        (~0.4); the Owczarzy path is GC-aware and uses the corrected Mg term — see
+        the README / DIMER_SALT_TEMP_PLAN.md benchmark.
 
     Raises
     ------
@@ -124,15 +127,26 @@ def hairpin_thermo(
     # whole-helix model needs the stem length and is only fit for ≥6 bp; below that
     # (or when forced off) we use the per-base-pair correction.
     n = len(pairs)
-    use_tc = salt_model == "tan_chen" or (
-        salt_model == "auto" and material.lower() in ("dna", "rna") and n >= TAN_CHEN_MIN_BP
-    )
-    if use_tc:
-        salt_dg = tan_chen_helix_dg(n, sodium_M, magnesium_M, material)
-        applied = "tan_chen"
+    if salt_model == "owczarzy":
+        # Graft the GC-aware, experimentally-calibrated Owczarzy Tm shift onto the
+        # hairpin: find the closed-state ΔG offset that reproduces exactly the
+        # Owczarzy ΔTm relative to this model's own 1 M-Na⁺ Tm.  This corrects the
+        # *salt slope* without disturbing the absolute ΔH/ΔS offset.  The relevant
+        # duplex for Owczarzy is the stem, so fGC / N come from the stem arm, not
+        # the loop-diluted full probe.
+        salt_dg = _owczarzy_salt_dg(seq, pairs, dG37_1M, dH, sodium_M, magnesium_M)
+        applied = "owczarzy"
     else:
-        salt_dg = n * dg_per_bp_salt(sodium_M, magnesium_M)
-        applied = "per_bp"
+        use_tc = salt_model == "tan_chen" or (
+            salt_model == "auto" and material.lower() in ("dna", "rna")
+            and n >= TAN_CHEN_MIN_BP
+        )
+        if use_tc:
+            salt_dg = tan_chen_helix_dg(n, sodium_M, magnesium_M, material)
+            applied = "tan_chen"
+        else:
+            salt_dg = n * dg_per_bp_salt(sodium_M, magnesium_M)
+            applied = "per_bp"
     dG37 = dG37_1M + salt_dg
     dS_kcal = (dH - dG37) / T_REF               # kcal/mol/K
     if dS_kcal == 0:
@@ -181,6 +195,33 @@ def fraction_folded(
 
 
 # ─── internals ────────────────────────────────────────────────────────────────
+
+def _owczarzy_salt_dg(seq, pairs, dG37_1M, dH, sodium_M, magnesium_M):
+    """Closed-state ΔG₃₇ offset reproducing the Owczarzy ΔTm for the stem.
+
+    The two-state hairpin obeys ``Tm = ΔH/ΔS`` with ``ΔS = (ΔH − ΔG₃₇)/T_ref``.
+    Adding ``salt_dg`` to ΔG₃₇ moves Tm; solving for the ``salt_dg`` that yields
+    exactly ``Tm₁ₘ + ΔTm_owczarzy`` gives
+
+        salt_dg = T_ref · ΔH · (1/Tm₁ₘ − 1/(Tm₁ₘ + ΔTm)),
+
+    with Tm in kelvin.  ΔTm comes from :func:`strider.thermo.salt.owczarzy_tm_correction`
+    evaluated on the *stem* (its 5' arm: one base per base pair), so fGC and the
+    base-pair count match the duplex the Owczarzy fit was calibrated on.  Returns
+    0 at the 1 M Na⁺ / 0 Mg²⁺ reference (ΔTm = 0).
+    """
+    from strider.thermo.salt import owczarzy_tm_correction
+    dS_kcal_1M = (dH - dG37_1M) / T_REF
+    if dS_kcal_1M == 0:
+        return 0.0
+    tm1_K = dH / dS_kcal_1M
+    stem_arm = "".join(seq[i] for i, _ in pairs)  # 5' strand of the stem
+    dTm = owczarzy_tm_correction(stem_arm, sodium_M, magnesium_M)
+    denom = tm1_K + dTm
+    if denom == 0 or tm1_K == 0:
+        return 0.0
+    return T_REF * dH * (1.0 / tm1_K - 1.0 / denom)
+
 
 def _dotbracket(seq: str, pairs: list[tuple[int, int]]) -> str:
     s = ["."] * len(seq)

@@ -303,8 +303,9 @@ engine = ThermoEngine()
 dg = engine.duplex_dg('ATCGATCG', 'CGATCGAT')
 print(f"ΔG = {dg:.2f} kcal/mol")       # ΔG = -7.4 kcal/mol
 
-# Standalone NN function (DNA only, always native)
-dg_nn = duplex_dg('ATCGATCG', celsius=37.0, sodium_M=0.137)
+# Standalone NN function (DNA only, always native).
+# Two-state ΔH−T·ΔS, with both [Na+] and [Mg2+] folded into the correction.
+dg_nn = duplex_dg('ATCGATCG', celsius=37.0, sodium_M=0.137, magnesium_M=0.010)
 print(f"ΔG (NN) = {dg_nn:.2f} kcal/mol")
 
 # Melting temperature
@@ -376,6 +377,57 @@ On the monovalent (Na⁺) axis all three agree within ~3 °C (e.g. ΔTm ≈ −1
 > **Citation.** Z.-J. Tan and S.-J. Chen, "RNA Helix Stability in Mixed Na⁺/Mg²⁺ Solution," *Biophysical Journal* **92**(10):3615–3632 (2007). doi:10.1529/biophysj.106.100388. (Companion: Tan & Chen, *Biophys. J.* **90**(4):1175–1190, 2006.)
 
 [^rejtar]: Department of Biochemistry, Masaryk University.
+
+#### Salt and temperature in the folding engine
+
+The `sodium`, `magnesium`, and `celsius` you pass to `ThermoEngine` now propagate
+through the **whole native folding path** — MFE, the partition function, and the
+two-state duplex — not just the hairpin Tm. Both knobs are off by default at the
+1 M Na⁺ / 0 Mg²⁺ / 37 °C reference, where results are **bit-identical** to the
+unsalted, ΔG₃₇ engine.
+
+```python
+seq = 'GCGCAAAAGCGC'
+
+# Salt: each closed base pair carries the per-bp correction dg_per_bp_salt =
+# −0.114·ln([Na⁺] + 3.4·√[Mg²⁺]). MFE, pfunc, and duplex_dg all shift together.
+for na, mg in [(1.0, 0.0), (0.05, 0.0), (0.05, 0.010)]:
+    e = ThermoEngine('dna', sodium=na, magnesium=mg)
+    print(f"[Na]={na} [Mg]={mg}: MFE={e.mfe(seq).energy:+.2f}  pfunc={e.pfunc(seq).free_energy:+.2f}")
+# [Na]=1.0  [Mg]=0.0  : MFE=-3.25  pfunc=-3.44
+# [Na]=0.05 [Mg]=0.0  : MFE=-1.88  pfunc=-2.21   ← lower salt destabilizes
+# [Na]=0.05 [Mg]=0.010: MFE=-2.82  pfunc=-3.04   ← Mg²⁺ buys stability back
+
+# Temperature: the engine extrapolates the *energy tables*, not just the R·T
+# Boltzmann prefactor. Each parameter blends toward its enthalpy,
+#   ΔG(T) = ΔG₃₇·(T/T_ref) + ΔH·(1 − T/T_ref),   T_ref = 310.15 K
+# so ΔG(37 °C) = ΔG₃₇ exactly and colder = more stable. (At the 1 M reference,
+# so the 37 °C value matches the salt example above and isolates temperature.)
+for T in (25, 37, 55):
+    e = ThermoEngine('dna', celsius=T, sodium=1.0, magnesium=0.0)
+    print(f"T={T} °C: MFE={e.mfe(seq).energy:+.2f}")
+# T=25 °C: MFE=-4.44   T=37 °C: MFE=-3.25   T=55 °C: MFE=-1.47
+```
+
+Provenance and scope of the temperature extrapolation:
+
+- **DNA** is the solid path: stack, mismatch, and tri-/tetraloop ΔH come from the
+  SantaLucia 2004 / UNAFold `.dh` tables; loop-*initiation* ΔH is genuinely 0
+  (purely entropic, the UNAFold convention), so loop penalties scale as `T/T_ref`.
+- **RNA** loop-initiation ΔH is curated from Turner 2004 (ViennaRNA
+  `rna_turner2004.par`) — and unlike DNA it is **non-zero** (hairpin
+  1.3/4.8/−2.9…, bulge 10.6/7.1…, interior −7.2/−1.3 kcal/mol). The generator
+  validates each loop-size ΔG against strider's own tables before grafting the
+  ΔH, so the two stay on the same model.
+- **Left at 37 °C** (small, documented): the dangle / terminal-mismatch
+  Boltzmann factors (precomputed, not exposed via the parameter schema) and the
+  per-bp salt term (fit at 37 °C, anchored — revisit if validation shows a slope
+  error). RNA terminal-mismatch/dangle ΔH are likewise uncurated.
+
+> The hairpin Tm path above uses the whole-helix Tan-Chen salt model; the folding
+> engine here uses the per-base-pair `dg_per_bp_salt` (the quantity the McCaskill
+> DP can apply pair-by-pair). They are two correct corrections for two different
+> calculations — see *Background → Salt corrections*.
 
 #### Reaction ΔΔG
 
@@ -2173,8 +2225,13 @@ The miRNA is released intact in the second reaction, allowing it to trigger addi
 
 ### Salt corrections
 
-Non-1M NaCl conditions are corrected via the Owczarzy (2004/2008) models. The mixed-ion regime selects between Na⁺-only and Mg²⁺-only corrections based on √[Mg²⁺]/[Na⁺]:
+strider applies three salt models, each matched to the calculation that consumes it (all anchored so 1 M Na⁺ / 0 Mg²⁺ is a no-op):
 
+- **Per-base-pair `dg_per_bp_salt`** = −0.114·ln([Na⁺] + 3.4·√[Mg²⁺]) — the *folding-engine* correction. It is a per-pair quantity, so the McCaskill / Zuker DP can add it to every closed base pair; this is what makes `mfe`, `pfunc`, and `duplex_dg` salt-aware. Fit at 37 °C (temperature-independent).
+- **Tan-Chen (2007) tightly-bound-ion model** — the *hairpin-Tm* correction. A whole-helix quantity (needs the stem length *N*), it reproduces the experimental Mg²⁺ Tm slope on a DNA-beacon qPCR panel (0.71 vs measured ≈0.70 °C/mM) where the other two miss. Default for stems ≥ 6 bp; see *§2 Hairpin melting temperature*.
+- **Owczarzy (2004/2008)** — duplex-Tm corrections, selecting between Na⁺-only and Mg²⁺-only by √[Mg²⁺]/[Na⁺]. Used by the oligo `melting_temperature` path and selectable for hairpins (`salt_model="owczarzy"`); duplex-calibrated, so it over-shoots Mg²⁺ on short hairpin stems.
+
+- **Tan Z-J & Chen S-J** (2007). RNA helix stability in mixed Na⁺/Mg²⁺ solution. *Biophys. J.* 92, 3615–3632.
 - **Owczarzy R et al.** (2004). Effects of sodium ions on DNA duplex oligomers. *Biochemistry* 43, 3537–3554.
 - **Owczarzy R et al.** (2008). Magnesium ions and DNA. *Biochemistry* 47, 5336–5353.
 
