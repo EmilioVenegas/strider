@@ -351,17 +351,47 @@ class ThermoEngine:
         from strider.structure.mfe import fold_mfe
         from strider.thermo._param_context import param_context
         seq = _concat(sequences)
-        override = self.params if self._uses_custom_params() else None
-        with param_context(override):
-            structure, energy, pairs = fold_mfe(seq, self.celsius, self.material)
+        with param_context(self._param_override()):
+            structure, energy, pairs = fold_mfe(
+                seq, self.celsius, self.material, self.sodium, self.magnesium,
+            )
         return MFEResult(energy=energy, structure=structure, base_pairs=pairs, sequence=seq)
 
     def _pfunc_native(self, sequences: tuple[str, ...]) -> PFuncResult:
         """Partition function via the built-in McCaskill DP (single- or multi-strand)."""
         from strider.thermo._param_context import param_context
-        override = self.params if self._uses_custom_params() else None
-        with param_context(override):
+        with param_context(self._param_override()):
             return self._pfunc_native_inner(sequences)
+
+    def _param_override(self) -> "ParameterSet | None":
+        """Resolve the :class:`ParameterSet` override active for the native DP.
+
+        Three regimes, in order:
+
+        * **celsius == 37 °C, default params** → ``None``.  The DP falls through
+          to the module-level constants in :mod:`strider.thermo.parameters_dna`
+          / ``parameters_rna``, numerically identical to every prior release.
+        * **celsius == 37 °C, custom params** → the custom set, unblended.
+        * **celsius != 37 °C** → a temperature-blended set (``ΔG(T) = ΔG₃₇·T/Tref
+          + ΔH·(1 − T/Tref)``).  For a custom set we blend the whole set (its
+          ``dG``/``dH`` share keys); for the default we synthesize a *minimal*
+          override carrying only the temperature-varying tables sourced straight
+          from the module constants (see
+          :func:`strider.thermo.temperature.native_temperature_paramset`), so
+          untouched tables fall back to those same constants.  The STK_* dangle
+          / terminal-mismatch Boltzmann factors are baked at 37 °C and are not
+          exposed via the schema, so they stay at 37 °C (small terminal terms;
+          documented limitation).
+        """
+        custom = self.params if self._uses_custom_params() else None
+        if self.celsius == 37.0:
+            return custom
+        from strider.thermo.temperature import (
+            blend_paramset, native_temperature_paramset,
+        )
+        if custom is not None:
+            return blend_paramset(custom, self.celsius)
+        return native_temperature_paramset(self.material, self.celsius)
 
     def _pfunc_native_inner(self, sequences: tuple[str, ...]) -> PFuncResult:
         """Body of :meth:`_pfunc_native`; called inside the override context."""
