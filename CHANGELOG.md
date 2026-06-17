@@ -5,6 +5,21 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.7.0] - 2026-06-17
+
+### Documentation
+
+- Document project limitations and improve parity testing for ViennaRNA backend
+- Remove project documentation and configuration files
+
+### Features
+
+- Integrate Vienna backend and expand benchmarking suite
+
+### Refactor
+
+- Expand benchmarking suite to include multi-axis cross-validation with NUPACK and ViennaRNA
+
 ## [0.6.0] - 2026-06-16
 
 ### Features
