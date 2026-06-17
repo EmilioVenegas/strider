@@ -57,12 +57,13 @@ Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for mult
 6. [API reference](#api-reference)
 7. [Examples](#examples)
 8. [Backend comparison](#backend-comparison)
-9. [Running the tests](#running-the-tests)
-10. [Troubleshooting](#troubleshooting)
-11. [Background and theory](#background-and-theory)
-12. [Citation](#citation)
-13. [API stability and versioning](#api-stability-and-versioning)
-14. [License](#license)
+9. [Known limitations](#known-limitations)
+10. [Running the tests](#running-the-tests)
+11. [Troubleshooting](#troubleshooting)
+12. [Background and theory](#background-and-theory)
+13. [Citation](#citation)
+14. [API stability and versioning](#api-stability-and-versioning)
+15. [License](#license)
 
 ---
 
@@ -2108,7 +2109,7 @@ Reproduce with `python scripts/bench_mfe.py`.
 
 **Accuracy.** Stack energies match the source papers exactly (SantaLucia 2004 AA/TT = −1.00 kcal/mol, CG/CG = −2.17, GC/GC = −2.24; Mathews 1999 AU/UA = −0.93). The McCaskill outside recurrence is the exact adjoint of the inside DP: pair probabilities satisfy the unpaired-marginal identity to numerical precision (incl. multiloop-enclosed pairs, which the partition function now scores with a correct ≥2-branch multiloop closure — no stacked-helix double-count and with leading-unpaired bases). This holds for **single- and multi-strand** complexes alike — the immediate nick-junction pair straddling a strand boundary is exact too, validated against a brute-force enumeration of the model.
 
-**Optional Vienna backend.** If `ViennaRNA` is installed and you set `backend='vienna'`, strider routes MFE / pfunc to RNA.fold / RNA.pf_fold. Use it for production-quality folding of sequences > ~200 nt where native runtime becomes the bottleneck. The Tube/ComplexSet API, leakage enumeration, kinetics, and design pipelines work identically on top of either backend.
+**Optional Vienna backend.** If `ViennaRNA` is installed and you set `backend='vienna'`, strider routes MFE to `fold_compound.mfe()` and the partition function to `fold_compound.pf()` (true ensemble ΔG = −RT·ln Z) with pair probabilities from `fold_compound.bpp()`. The backend honors the engine's `material`: DNA folds load ViennaRNA's bundled Mathews-2004 DNA parameters, RNA folds use Turner-2004. Use it for production-quality folding of sequences > ~200 nt where native runtime becomes the bottleneck. The Tube/ComplexSet API, leakage enumeration, kinetics, and design pipelines work identically on top of either backend. (It is a cross-check backend, never auto-selected — `'auto'` always resolves to `native` so results never silently depend on an external library.)
 
 **When to use each backend:**
 
@@ -2119,6 +2120,44 @@ Reproduce with `python scripts/bench_mfe.py`.
 | MFE folding of sequences > 200 nt | `vienna` (optional, opt-in) |
 | No external dependencies (CI, lightweight environments) | `native` (default) |
 | Single-strand / multiloop pair probabilities (exact) | `native` |
+
+---
+
+## Known limitations
+
+strider is an open, auditable, differentiable thermodynamics + kinetics + circuit stack. It is
+**not** a drop-in NUPACK/ViennaRNA replacement, and we state the boundaries plainly so you can
+judge fit. These fall into two groups.
+
+**strider-specific (where the established tools are ahead):**
+
+- **~0.9 kcal/mol mean RNA ΔΔG vs NUPACK.** On RNA folding the native parameter lineage
+  (Turner/Mathews-derived, re-built from primary literature) differs from NUPACK's `rna06` set by
+  a mean ~0.9 kcal/mol in ensemble ΔG. Topology (which pairs form) agrees well; absolute free
+  energies carry this offset. Use NUPACK/ViennaRNA when sub-kcal RNA accuracy is the priority.
+- **Speed.** The native engine is pure-Python O(n³) DP with no JIT — roughly **~970× slower than
+  NUPACK's C kernel** on single sequences (~4 ms at 20 nt, ~1 s at 100 nt for pfunc + pair probs).
+  For long sequences (> ~200 nt) use the optional `vienna` backend, the GPU-batched
+  `thermo.differentiable` path, or reserve native for screening/design at < 100 nt.
+- **~13 °C hairpin-Tm offset.** Predicted molecular-beacon hairpin melting temperatures run ~13 °C
+  below an experimental qPCR panel. The leading hypothesis is **end-stacking of the fluorophore/
+  quencher labels** (an effect outside the bare-sequence NN model), not a parameter bug; this is
+  flagged and tracked, not yet closed. Treat hairpin **Tm** as approximate; ΔG and *relative*
+  comparisons are unaffected.
+
+**Shared with NUPACK/ViennaRNA (modeling choices common to NN-based tools, not strider bugs):**
+
+- **ΔCp = 0 → linear ΔG(T).** Heat capacity change on folding is taken as zero, so ΔG(T) is linear
+  (ΔG₃₇ blended with ΔH toward the enthalpy limit). Accurate near 37 °C; the linear extrapolation
+  degrades at temperature extremes far from the reference.
+- **Two-state hairpin/dimer thermodynamics.** Melt curves and Tm use a two-state (folded ⇄ unfolded)
+  approximation per hairpin/dimer; multi-state intermediates are not modeled in the Tm path.
+- **Restricted / off-by-default pseudoknots.** The DP covers nested secondary structure and a
+  restricted H-type pseudoknot class only; general pseudoknots are out of scope and disabled by
+  default.
+
+For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools — neither
+NUPACK nor ViennaRNA models Mg²⁺ — see the salt sections above.
 
 ---
 
