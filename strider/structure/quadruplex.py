@@ -1,4 +1,7 @@
 """
+[EXPERIMENTAL API — outside the semver contract until stabilized; see README
+"API stability and versioning".]
+
 G-quadruplex (G4) folding and aptamer thermodynamics — Frontier §3.
 
 NUPACK (and every secondary-structure partition-function engine) hardcodes

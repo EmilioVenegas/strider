@@ -1,4 +1,7 @@
 """
+[EXPERIMENTAL API — outside the semver contract until stabilized; see README
+"API stability and versioning".]
+
 Differentiable design objectives for gradient-based sequence design.
 
 These are the design-time counterparts of the discrete

@@ -1,4 +1,7 @@
 """
+[EXPERIMENTAL API — outside the semver contract until stabilized; see README
+"API stability and versioning".]
+
 Surface-tethered biophysics: the electrode/bead transducer layer.
 
 NUPACK is a bulk-solution calculator that stops at static equilibrium.  This

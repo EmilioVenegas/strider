@@ -246,8 +246,11 @@ def equilibrium_from_engine(
     compute their partition functions with ``engine``, then solve the
     equilibrium.
 
-    For new code, prefer the higher-level :class:`strider.tube.Tube` API,
-    which is what this function delegates to internally.
+    **API status: stable compatibility wrapper** — part of the 1.0 stable
+    surface and *not* deprecated; kept indefinitely as a thin shim. For new
+    code, prefer the higher-level :class:`strider.tube.Tube` API, which is what
+    this function delegates to internally and which also exposes pair
+    probabilities, ensemble defect, and richer complex specification.
 
     Parameters
     ----------

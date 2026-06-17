@@ -1,4 +1,7 @@
 """
+[EXPERIMENTAL API — outside the semver contract until stabilized; see README
+"API stability and versioning".]
+
 Low-copy stochastic surface capture — shot-noise-limited detection (Frontier §6).
 
 The deterministic :class:`~strider.surface.transducer.SurfaceModel` returns the

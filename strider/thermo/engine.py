@@ -521,10 +521,12 @@ class ThermoEngine:
 
         if len(sequences) == 1:
             seq = sequences[0]
-            structure, energy = vb.fold(seq, self.celsius)
+            structure, energy = vb.fold(seq, self.celsius, self.material)
         else:
             seq = "&".join(sequences)
-            structure, energy = vb.co_fold(sequences[0], sequences[1], self.celsius)
+            structure, energy = vb.co_fold(
+                sequences[0], sequences[1], self.celsius, self.material
+            )
             # ViennaRNA mfe_dimer() returns a flat structure without '&';
             # reinsert it so len(structure) == len(seq).
             nick = len(sequences[0])
@@ -538,7 +540,7 @@ class ThermoEngine:
         """Partition function via ViennaRNA pf_fold()."""
         from strider.thermo import vienna_backend as vb
         seq = sequences[0] if len(sequences) == 1 else sequences[0] + "&" + sequences[-1]
-        dG, probs = vb.pf_fold(sequences[0], self.celsius)
+        dG, probs = vb.pf_fold(sequences[0], self.celsius, self.material)
         Z = math.exp(-dG / (R * (self.celsius + 273.15)))
         return PFuncResult(free_energy=dG, partition_function=Z, pair_probs=probs)
 

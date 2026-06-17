@@ -12,6 +12,13 @@ theme:
     - navigation.sections
     - navigation.top
 
+# The docs home page includes the canonical README verbatim (see docs/index.md),
+# so the repo README is the single source of truth — no hand-maintained duplicate.
+markdown_extensions:
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
 plugins:
   - search
   - mkdocstrings:
@@ -25,4 +32,5 @@ plugins:
 
 nav:
   - Home: index.md
+  - Known limitations: limitations.md
   - API Reference: api.md
