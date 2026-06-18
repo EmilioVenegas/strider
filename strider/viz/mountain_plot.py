@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from strider.viz import style
+
 
 def mountain_plot(
     sequence: str,
@@ -18,7 +20,6 @@ def mountain_plot(
     the expected mountain height is computed from probabilities.
     """
     import matplotlib.pyplot as plt
-    import numpy as np
     from strider.structure.mountain import mountain_vector, mountain_from_probs
 
     if ax is None:
@@ -28,7 +29,7 @@ def mountain_plot(
         result = engine.mfe(sequence)
         structures = [result.structure]
 
-    colors = ["#2196F3", "#F44336", "#4CAF50", "#FF9800"]
+    colors = style.STRAND_CYCLE
 
     if pair_probs is not None:
         expected = mountain_from_probs(pair_probs)
@@ -64,7 +65,6 @@ def energy_landscape(
     barriers : optional {transition_name: ΔG_barrier} between states
     """
     import matplotlib.pyplot as plt
-    import numpy as np
 
     if ax is None:
         _, ax = plt.subplots(figsize=(max(6, len(pathway) * 2), 4))
@@ -77,7 +77,7 @@ def energy_landscape(
 
     # Draw energy levels as horizontal lines
     for x, y, label in zip(xs, ys, labels):
-        ax.hlines(y, x - 0.3, x + 0.3, linewidth=3, color="#2196F3")
+        ax.hlines(y, x - 0.3, x + 0.3, linewidth=3, color=style.C_NATIVE)
         ax.text(x, y + 0.15, label.replace("_", "\n"), ha="center", fontsize=8)
 
     # Connect states with lines
