@@ -167,16 +167,101 @@ def cmd_verify(args) -> int:
     return 0
 
 
+# ─── draw ────────────────────────────────────────────────────────────────────
+
+def _draw_engine(args):
+    import matplotlib
+    matplotlib.use("Agg")
+    return _make_engine(args)
+
+
+def cmd_draw_structure(args) -> int:
+    eng = _draw_engine(args)
+    from strider.viz.structure2d import draw_structure
+    seq = _read_sequence(args.sequence) if "&" not in args.sequence else args.sequence.upper()
+    ax = draw_structure(
+        seq, args.structure, engine=eng, color=args.color,
+        relax_iters=0 if args.no_relax else 60, title=args.title,
+    )
+    return _savefig(ax, args)
+
+
+def cmd_draw_complex(args) -> int:
+    eng = _draw_engine(args)
+    from strider.viz.structure2d import draw_complex
+    seqs = [_read_sequence(s) for s in args.sequences]
+    ax = draw_complex(seqs, args.structure, engine=eng, names=args.names, title=args.title)
+    return _savefig(ax, args)
+
+
+def cmd_draw_accessibility(args) -> int:
+    eng = _draw_engine(args)
+    from strider.viz.annotate import draw_accessibility_track
+    seq = _read_sequence(args.sequence)
+    domains = None
+    if args.domains:
+        if args.domains.startswith("@"):
+            with open(args.domains[1:]) as f:
+                spec = json.load(f)
+        else:
+            spec = json.loads(args.domains)
+        # 2-element lists are interpreted as [start, end] spans
+        domains = {k: (tuple(v) if isinstance(v, list) and len(v) == 2 else v)
+                   for k, v in spec.items()}
+    ax = draw_accessibility_track(seq, engine=eng, domains=domains, title=args.title)
+    return _savefig(ax, args)
+
+
+def cmd_draw_arc(args) -> int:
+    eng = _draw_engine(args)
+    from strider.viz.arc import arc_diagram
+    seq = _read_sequence(args.sequence) if "&" not in args.sequence else args.sequence.upper()
+    ax = arc_diagram(seq, args.structure, engine=eng, color_by=args.color_by,
+                     min_prob=args.min_prob, title=args.title)
+    return _savefig(ax, args)
+
+
+def cmd_draw_reaction(args) -> int:
+    eng = _draw_engine(args)
+    from strider.bridge.mantis_bridge import CHABridge
+    from strider.viz.reaction import draw_cascade
+    with open(args.spec) as f:
+        sequences = json.load(f)
+    bridge = CHABridge(sequences=sequences, engine=eng)
+    fig = draw_cascade(bridge, engine=eng, show_rates=args.rates,
+                       title=args.title or "Reaction cascade")
+    return _savefig(fig, args)
+
+
 # ─── argparse wiring ─────────────────────────────────────────────────────────
 
-def _add_engine_args(p: argparse.ArgumentParser) -> None:
+def _add_thermo_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--celsius", type=float, default=37.0, help="temperature (°C, default 37)")
     p.add_argument("--material", choices=["dna", "rna"], default="dna")
     p.add_argument("--sodium", type=float, default=0.137, help="[Na+] in M (default 0.137)")
     p.add_argument("--magnesium", type=float, default=0.01, help="[Mg2+] in M (default 0.01)")
     p.add_argument("--backend", choices=["auto", "native", "vienna"],
                    default="native", help="thermo backend (default native)")
+
+
+def _add_engine_args(p: argparse.ArgumentParser) -> None:
+    _add_thermo_args(p)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+
+def _add_fig_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--out", "-o", required=True,
+                   help="output figure path (format from extension: png/svg/pdf)")
+    p.add_argument("--dpi", type=int, default=150, help="raster DPI (default 150)")
+    p.add_argument("--title", default=None, help="figure title")
+
+
+def _savefig(obj, args) -> int:
+    """Save a returned Axes or Figure to ``args.out`` and report."""
+    fig = obj.figure if hasattr(obj, "figure") else obj
+    fig.savefig(args.out, dpi=args.dpi, bbox_inches="tight")
+    print(f"wrote {args.out}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -241,7 +326,61 @@ def build_parser() -> argparse.ArgumentParser:
     _add_engine_args(p_v)
     p_v.set_defaults(func=cmd_verify)
 
+    # draw (nested subcommands)
+    _add_draw_subparser(sub)
+
     return parser
+
+
+def _add_draw_subparser(sub) -> None:
+    p_draw = sub.add_parser("draw", help="render visualization figures")
+    draw_sub = p_draw.add_subparsers(dest="draw_command", required=True)
+
+    # draw structure
+    ps = draw_sub.add_parser("structure", help="2D secondary structure")
+    ps.add_argument("sequence", help="sequence ('&'/'+' for multi-strand, '@file', '-' stdin)")
+    ps.add_argument("--structure", default=None, help="dot-bracket (folded if omitted)")
+    ps.add_argument("--color", choices=["nt", "strand", "accessibility"], default="nt")
+    ps.add_argument("--no-relax", action="store_true", help="disable layout relaxation")
+    _add_thermo_args(ps)
+    _add_fig_args(ps)
+    ps.set_defaults(func=cmd_draw_structure)
+
+    # draw complex
+    pc = draw_sub.add_parser("complex", help="2D multi-strand complex")
+    pc.add_argument("sequences", nargs="+", help="two or more strand sequences")
+    pc.add_argument("--names", nargs="+", default=None, help="per-strand labels")
+    pc.add_argument("--structure", default=None, help="dot-bracket (folded if omitted)")
+    _add_thermo_args(pc)
+    _add_fig_args(pc)
+    pc.set_defaults(func=cmd_draw_complex)
+
+    # draw accessibility
+    pa = draw_sub.add_parser("accessibility", help="1D toehold-accessibility track")
+    pa.add_argument("sequence", help="sequence ('@file', '-' stdin)")
+    pa.add_argument("--domains", default=None,
+                    help='JSON or @file of {"name":[start,end]} domain spans')
+    _add_thermo_args(pa)
+    _add_fig_args(pa)
+    pa.set_defaults(func=cmd_draw_accessibility)
+
+    # draw arc
+    par = draw_sub.add_parser("arc", help="arc diagram")
+    par.add_argument("sequence", help="sequence ('&'/'+' for multi-strand)")
+    par.add_argument("--structure", default=None, help="dot-bracket (folded if omitted)")
+    par.add_argument("--color-by", choices=["type", "probability", "strand"], default="type")
+    par.add_argument("--min-prob", type=float, default=0.1)
+    _add_thermo_args(par)
+    _add_fig_args(par)
+    par.set_defaults(func=cmd_draw_arc)
+
+    # draw reaction
+    pr = draw_sub.add_parser("reaction", help="CHA reaction cascade from a JSON spec")
+    pr.add_argument("--spec", required=True, help="JSON spec {mirna,H1,H2,CP}")
+    pr.add_argument("--rates", action="store_true", help="annotate kinetic rates")
+    _add_thermo_args(pr)
+    _add_fig_args(pr)
+    pr.set_defaults(func=cmd_draw_reaction)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
