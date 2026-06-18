@@ -188,6 +188,7 @@ class ThermoEngine:
         from strider.structure.sampling import sample_structures
         return sample_structures(
             sequence, n_samples, celsius=self.celsius, material=self.material, seed=seed,
+            sodium_M=self.sodium, magnesium_M=self.magnesium,
         )
 
     def subopt(
@@ -201,6 +202,7 @@ class ThermoEngine:
         return subopt_structures(
             sequence, gap=gap, celsius=self.celsius, material=self.material,
             max_structures=max_structures,
+            sodium_M=self.sodium, magnesium_M=self.magnesium,
         )
 
     def pairs(self, *sequences: str) -> np.ndarray:
