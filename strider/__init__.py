@@ -202,14 +202,31 @@ __all__ = [
     "no_spurious_dimer", "leakage_below_signal",
     # Export
     "to_vienna", "to_ct", "to_bpseq", "to_fasta", "to_oxdna", "write",
+    # Visualization (lazy; require matplotlib)
+    "draw_structure", "draw_complex", "draw_cascade", "draw_reaction_step",
+    "draw_accessibility_track", "arc_diagram", "mountain_plot", "energy_landscape",
+    "cha_circuit", "layout_structure",
 ]
 
 # Lazily import the torch-backed differentiable API (PEP 562) so the rest of the
 # package is usable without torch. Accessing these names installs a clear hint if
 # the optional dependency is missing.
 _LAZY = {
-    "DifferentiableDesigner": ("strider.design.diff_designer", "DifferentiableDesigner"),
-    "DiffObjective": ("strider.thermo.diff_design", "DiffObjective"),
+    # name: (module_path, attr, optional_extra)
+    "DifferentiableDesigner": ("strider.design.diff_designer", "DifferentiableDesigner", "diff"),
+    "DiffObjective": ("strider.thermo.diff_design", "DiffObjective", "diff"),
+    # Visualization (matplotlib is a core dep, so these normally import fine; kept
+    # lazy so `import strider` does not pull matplotlib for non-plotting users).
+    "draw_structure": ("strider.viz.structure2d", "draw_structure", "viz"),
+    "draw_complex": ("strider.viz.structure2d", "draw_complex", "viz"),
+    "draw_cascade": ("strider.viz.reaction", "draw_cascade", "viz"),
+    "draw_reaction_step": ("strider.viz.reaction", "draw_reaction_step", "viz"),
+    "draw_accessibility_track": ("strider.viz.annotate", "draw_accessibility_track", "viz"),
+    "arc_diagram": ("strider.viz.arc", "arc_diagram", "viz"),
+    "mountain_plot": ("strider.viz.mountain_plot", "mountain_plot", "viz"),
+    "energy_landscape": ("strider.viz.mountain_plot", "energy_landscape", "viz"),
+    "cha_circuit": ("strider.viz.circuit_diagram", "cha_circuit", "viz"),
+    "layout_structure": ("strider.viz.layout", "layout_structure", "viz"),
 }
 
 
@@ -217,14 +234,14 @@ def __getattr__(name):  # noqa: D401 - module-level lazy loader
     target = _LAZY.get(name)
     if target is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_path, attr = target
+    module_path, attr, extra = target
     try:
         import importlib
         module = importlib.import_module(module_path)
-    except ImportError as exc:  # almost always a missing torch
+    except ImportError as exc:  # missing optional dependency
         raise ImportError(
-            f"strider.{name} requires the optional 'torch' dependency. "
-            f"Install it with:  pip install 'strider-dna[diff]'"
+            f"strider.{name} requires the optional '{extra}' dependency group. "
+            f"Install it with:  pip install 'strider-dna[{extra}]'"
         ) from exc
     value = getattr(module, attr)
     globals()[name] = value  # cache so __getattr__ isn't hit again
