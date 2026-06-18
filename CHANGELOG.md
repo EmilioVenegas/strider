@@ -5,6 +5,92 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.8.0] - 2026-06-18
+
+### Documentation
+
+- **viz:** Add visualization guide and API reference entries
+
+    - New docs/visualization.md: user-facing guide covering structure
+      drawing, cascade rendering, accessibility tracks, and gallery.
+    - docs/api.md: append mkdocstrings entries for all viz public functions.
+    - mkdocs.yml: add Visualization page to nav.
+
+- Add visualization section to README
+
+    - Installation: add [viz] optional-dependency group
+    - TOC: add §21 Visualization entry
+    - CLI: document 'strider draw' subcommands (structure, complex,
+      accessibility, arc, reaction) with examples
+    - User guide §21: full write-up covering draw_structure, draw_complex,
+      draw_cascade, draw_accessibility_track, arc_diagram, mountain_plot,
+      energy_landscape, and the shared style system
+    - Examples: list new gallery scripts 13–21 with descriptions
+
+
+### Features
+
+- **viz:** Add core visualization modules and shared style
+
+    New modules:
+    - style.py: shared palette constants, pair_color(), style_context()
+    - geometry.py: radial/spring layout helpers for structure drawing
+    - layout.py: Layout2D coordinate engine for stem-loop planar embedding
+    - structure2d.py: draw_structure() and draw_complex() for native 2-D
+      secondary-structure rendering without ViennaRNA
+    - annotate.py: draw_accessibility_track() heatmap overlay
+    - reaction.py: draw_cascade() and draw_reaction_step() for generic
+      toehold-mediated strand-displacement cascades
+
+    Updated existing viz modules:
+    - arc.py: use style palette, add strand-based colouring, nick markers
+    - circuit_diagram.py: delegate to draw_cascade when sequences are
+      available, keep schematic fallback for DDG-only calls
+    - mountain_plot.py: use style.STRAND_CYCLE and style.C_NATIVE
+    - __init__.py: re-export all public viz functions
+
+- **viz:** Add CLI draw subcommands
+
+    Add 'strider draw' with nested subcommands:
+      structure   — 2D secondary structure rendering
+      complex     — multi-strand complex diagram
+      accessibility — toehold accessibility track
+      arc         — arc diagram (base-pair probability)
+      reaction    — CHA cascade from a JSON spec
+
+    Refactor _add_engine_args into _add_thermo_args (shared by draw and
+    analysis commands) and add _add_fig_args / _savefig helpers for
+    consistent figure output (--out, --dpi, --title).
+
+- **viz:** Lazy-import viz functions from top-level strider
+
+    Extend the PEP 562 lazy-loader to expose all viz public names
+    (draw_structure, draw_complex, draw_cascade, arc_diagram, etc.)
+    from 'import strider' without eagerly pulling in matplotlib.
+
+    The _LAZY dict now stores a 3-tuple (module, attr, extra) so the
+    ImportError message points to the correct optional-dependency group
+    (e.g. 'strider-dna[viz]' instead of always saying torch).
+
+
+### Testing
+
+- **viz:** Add visualization test suite and baselines
+
+    - test_viz_artists.py: smoke tests for draw_structure, draw_complex,
+      arc_diagram, mountain_plot, energy_landscape, draw_accessibility_track
+    - test_viz_baseline.py: pytest-mpl image comparison against
+      tests/baseline/ PNGs (hairpin, duplex complex)
+    - test_viz_cli.py: CLI integration tests for 'strider draw' subcommands
+    - test_viz_geometry.py: unit tests for radial/spring layout helpers
+    - test_viz_layout.py: Layout2D coordinate engine tests
+    - test_viz_reaction.py: draw_cascade and draw_reaction_step tests
+
+
+### Examples
+
+- Add viz demos and gallery scripts
+
 ## [0.7.0] - 2026-06-17
 
 ### Documentation
