@@ -198,10 +198,13 @@ class ThermoEngine:
     ) -> list[tuple[str, float, list[tuple[int, int]]]]:
         """Enumerate suboptimal structures within ``gap`` kcal/mol of the MFE."""
         from strider.structure.sampling import subopt_structures
-        return subopt_structures(
-            sequence, gap=gap, celsius=self.celsius, material=self.material,
-            max_structures=max_structures,
-        )
+        from strider.thermo._param_context import param_context
+        with param_context(self._param_override()):
+            return subopt_structures(
+                sequence, gap=gap, celsius=self.celsius, material=self.material,
+                max_structures=max_structures,
+                sodium_M=self.sodium, magnesium_M=self.magnesium,
+            )
 
     def pairs(self, *sequences: str) -> np.ndarray:
         """Pair-probability matrix P[i,j] for the given (multi-)strand complex."""

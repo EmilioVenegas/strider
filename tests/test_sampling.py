@@ -75,3 +75,23 @@ class TestSubopt:
     def test_engine_subopt_wrapper(self, engine):
         out = engine.subopt("GCGCAAAAGCGC", gap=2.0, max_structures=10)
         assert any(db == "((((....))))" for db, _, _ in out)
+
+    def test_subopt_matches_mfe_energy(self, engine):
+        """Suboptimal enumeration must return the MFE with the same energy."""
+        seq = "GCGCAAAAGCGC"
+        mfe_result = engine.mfe(seq)
+        out = engine.subopt(seq, gap=2.0, max_structures=10)
+        mfe_subopt = next((e for db, e, _ in out if db == mfe_result.structure), None)
+        assert mfe_subopt is not None, "MFE structure missing from subopt output"
+        assert mfe_subopt == pytest.approx(float(mfe_result.energy), abs=1e-6)
+
+    def test_subopt_respects_salt(self, engine):
+        """Suboptimal energies must shift when Mg2+ changes."""
+        seq = "GCGCAAAAGCGC"
+        low_salt = ThermoEngine(material="dna", celsius=37.0,
+                                sodium=0.05, magnesium=0.0)
+        high_mg = ThermoEngine(material="dna", celsius=37.0,
+                               sodium=0.05, magnesium=0.01)
+        out_low = low_salt.subopt(seq, gap=2.0, max_structures=5)
+        out_high = high_mg.subopt(seq, gap=2.0, max_structures=5)
+        assert out_low[0][1] != pytest.approx(out_high[0][1], abs=1e-3)
