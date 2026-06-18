@@ -52,18 +52,28 @@ def sample_structures(
     celsius: float = 37.0,
     material: str = "dna",
     seed: int | None = None,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
 ) -> list[tuple[str, list[tuple[int, int]]]]:
     """
     Draw ``n_samples`` structures from the equilibrium ensemble.
 
     Returns a list of ``(dot_bracket, pair_list)`` tuples, each entry sampled
     independently with probability ∝ exp(−E / RT).
+
+    Salt correction: the per-closed-base-pair Boltzmann factor of
+    :func:`strider.thermo.salt.dg_per_bp_salt` is folded into ``Qb`` (exactly as
+    :func:`strider.thermo.ensemble.ensemble_dg` does), so the sampling weights
+    track [Na⁺]/[Mg²⁺].  At 1 M Na⁺, 0 Mg²⁺ the factor is 1.0 and the
+    distribution is unchanged.
     """
+    from strider.thermo.salt import dg_per_bp_salt
     rng = random.Random(seed)
     seq = sequence.upper().replace("U", "T") if material == "dna" else sequence.upper().replace("T", "U")
     n = len(seq)
     T = celsius + 273.15
     pairs = _wc_pairs(material)
+    bp_salt_factor = _boltzmann(dg_per_bp_salt(sodium_M, magnesium_M, celsius, material), T)
 
     Q  = np.zeros((n, n))
     Qb = np.zeros((n, n))
@@ -74,7 +84,8 @@ def sample_structures(
     for i in range(n - 1):
         Q[i][i + 1] = 1.0
 
-    _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks=[])
+    _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks=[],
+                   bp_salt_factor=bp_salt_factor)
     _apply_coaxial_external(seq, Q, Qb, n, T, material)
 
     results = []
@@ -252,149 +263,191 @@ def subopt_structures(
     celsius: float = 37.0,
     material: str = "dna",
     max_structures: int = 200,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
 ) -> list[tuple[str, float, list[tuple[int, int]]]]:
     """
     Enumerate suboptimal structures within ``gap`` kcal/mol of the MFE.
 
-    Returns ``(dot_bracket, energy, pair_list)`` sorted by energy, capped at
-    ``max_structures`` results.
+    Single-strand or multi-strand: pass ``'&'`` / ``'+'`` separated strands
+    (e.g. ``"AAAA&TTTT"``) to enumerate dimer / complex structures.
 
-    Implementation: Wuchty-style worklist over the V/W matrices, pruned by a
-    lower-bound estimate (sum of W on open intervals).
+    Returns ``(dot_bracket, energy, pair_list)`` sorted by energy, capped at
+    ``max_structures`` results.  ``dot_bracket`` carries strand separators;
+    ``pair_list`` is 0-indexed over the concatenated sequence (separators
+    removed), matching :func:`strider.structure.mfe.fold_mfe`.
+
+    Implementation: a Wuchty-style enumeration over the *same* nick-aware
+    Zuker–Stiegler V/W/WM/WM1 matrices that :func:`fold_mfe` uses (built via
+    :func:`strider.structure.mfe._build_mfe_matrices`), so the lowest-energy
+    structure returned here is identical to ``fold_mfe`` — hairpins, internal
+    loops/bulges, multiloops, inter-strand pairs and the salt correction are all
+    accounted for.  Decompositions are pruned against the matrix lower bounds
+    and the ``mfe + gap`` window; total enumeration work is capped so a large
+    ``gap`` on a long sequence cannot hang.
+
+    Salt correction: each closed base pair contributes the per-base-pair ΔG
+    shift of :func:`strider.thermo.salt.dg_per_bp_salt` (baked into the shared
+    matrices), so subopt energies and the enumeration window track
+    [Na⁺]/[Mg²⁺].  At 1 M Na⁺, 0 Mg²⁺ the correction is exactly 0.
     """
     from strider.structure.mfe import (
-        _can_pair_fn, _stack_fn, _hairpin_energy, _normalize,
+        _parse_strands, _normalize, _build_mfe_matrices, _to_dot_bracket,
+        MIN_HAIRPIN_LOOP, _MAX_IL,
     )
-    seq = _normalize(sequence, material)
+    from strider.thermo.salt import dg_per_bp_salt
+
+    raw_seq, nicks, sep_char = _parse_strands(sequence, material)
+    seq = _normalize(raw_seq, material)
     n = len(seq)
     if n == 0:
         return []
 
-    # Re-run fold_mfe internals to get V and W; we re-compute here so we
-    # don't have to alter the public fold_mfe signature.
-    V, W = _fold_matrices(seq, celsius, material)
+    T = celsius + 273.15
+    dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
+    V, W, WM, WM1, energy_fns = _build_mfe_matrices(seq, T, material, nicks, dg_salt)
+    (can, spans, inter, hairpin_e, stack_e, il_e, terminal_e,
+     ml_a, ml_b, ml_c) = energy_fns
+
+    if n == 1:
+        return [(_to_dot_bracket([], n, nicks, sep_char), 0.0, [])]
+
     mfe = float(W[0][n - 1])
     bound = mfe + gap
+    EPS = 1e-7
+    # Cap total enumerated structures (incl. grammar-ambiguous duplicates,
+    # which are deduplicated below) so a wide gap on a long sequence is bounded.
+    hard_cap = max(max_structures * 200, 20000)
 
-    results: list[tuple[frozenset, float]] = []
+    def sub_V(i, j, cap):
+        """Structures on [i..j] with (i,j) paired and total energy ≤ ``cap``.
 
-    can = _can_pair_fn(material)
-    stack_e_fn = _stack_fn(material)
-
-    def hp_fn(i, j):
-        return _hairpin_energy(seq, i, j, celsius, material)
-
-    def visit_W(i: int, j: int, committed: float, pairs: frozenset):
-        """Enumerate all decompositions of W[i..j], appending complete structures to results."""
-        if len(results) >= max_structures:
+        Mirrors the V recurrence of :func:`fold_mfe`; ``dg_salt`` is added once
+        for the pair ``(i, j)`` created here (inner pairs carry their own)."""
+        if V[i][j] >= INF or V[i][j] > cap + EPS:
             return
+        inner = cap - dg_salt          # budget left after this pair's salt term
+        pair = (i, j)
+
+        # Hairpin
+        if not spans(i, j):
+            e = hairpin_e(seq, i, j, T)
+            if e <= inner + EPS:
+                yield frozenset((pair,)), e + dg_salt
+
+        # Inter-strand terminal (blunt) pair
+        if inter(i, j) and not can(i + 1, j - 1):
+            e = terminal_e(seq, i, j)
+            if e <= inner + EPS:
+                yield frozenset((pair,)), e + dg_salt
+
+        # Stack on (i+1, j-1)
+        if i + 1 < j - 1 and can(i + 1, j - 1):
+            st = stack_e(seq, i, j)
+            for p, e in sub_V(i + 1, j - 1, inner - st):
+                yield p | {pair}, st + e + dg_salt
+
+        # Internal loop / bulge to inner pair (ip, jp)
+        max_ip = min(i + _MAX_IL + 1, j - MIN_HAIRPIN_LOOP - 2)
+        for ip in range(i + 1, max_ip + 1):
+            min_jp = max(ip + MIN_HAIRPIN_LOOP + 1, j - _MAX_IL - 1)
+            for jp in range(min_jp, j):
+                if ip == i + 1 and jp == j - 1:
+                    continue  # covered by the stack case
+                nl = ip - i - 1
+                nr = j - jp - 1
+                if nl + nr == 0 or nl + nr > _MAX_IL:
+                    continue
+                if not can(ip, jp) or V[ip][jp] >= INF:
+                    continue
+                if spans(i + 1, ip - 1) or spans(jp + 1, j - 1):
+                    continue
+                il = il_e(seq, i, j, ip, jp, nl, nr)
+                if il + V[ip][jp] > inner + EPS:
+                    continue
+                for p, e in sub_V(ip, jp, inner - il):
+                    yield p | {pair}, il + e + dg_salt
+
+        # Multi-loop closed by (i, j): ≥2 branches inside
+        base = ml_a + ml_b
+        for k in range(i + 2, j - 1):
+            if WM[i + 1][k] >= INF or WM1[k + 1][j - 1] >= INF:
+                continue
+            if base + WM[i + 1][k] + WM1[k + 1][j - 1] > inner + EPS:
+                continue
+            for lp, le in sub_WM(i + 1, k, inner - base - WM1[k + 1][j - 1]):
+                for rp, re in sub_WM1(k + 1, j - 1, inner - base - le):
+                    yield lp | rp | {pair}, base + le + re + dg_salt
+
+    def sub_WM1(i, j, cap):
+        """One-branch multi-loop fragment WM1[i..j], energy ≤ ``cap``."""
+        if WM1[i][j] >= INF or WM1[i][j] > cap + EPS:
+            return
+        if V[i][j] < INF and V[i][j] + ml_b <= cap + EPS:
+            for p, e in sub_V(i, j, cap - ml_b):
+                yield p, e + ml_b
+        if j > i and WM1[i][j - 1] < INF and WM1[i][j - 1] + ml_c <= cap + EPS:
+            for p, e in sub_WM1(i, j - 1, cap - ml_c):
+                yield p, e + ml_c
+
+    def sub_WM(i, j, cap):
+        """Multi-loop fragment WM[i..j] with ≥1 branch, energy ≤ ``cap``."""
+        if WM[i][j] >= INF or WM[i][j] > cap + EPS:
+            return
+        if WM1[i][j] < INF and WM1[i][j] <= cap + EPS:
+            yield from sub_WM1(i, j, cap)
+        if j > i and WM[i][j - 1] < INF and WM[i][j - 1] + ml_c <= cap + EPS:
+            for p, e in sub_WM(i, j - 1, cap - ml_c):
+                yield p, e + ml_c
+        for k in range(i, j):
+            if WM[i][k] >= INF or WM1[k + 1][j] >= INF:
+                continue
+            if WM[i][k] + WM1[k + 1][j] > cap + EPS:
+                continue
+            for lp, le in sub_WM(i, k, cap - WM1[k + 1][j]):
+                for rp, re in sub_WM1(k + 1, j, cap - le):
+                    yield lp | rp, le + re
+
+    def sub_W(i, j, cap):
+        """Exterior-context structures on [i..j], energy ≤ ``cap``.
+
+        Unambiguous by leftmost base: ``i`` is either unpaired or the 5' end of
+        exactly one stem ``(i, k)`` (intra- or inter-strand)."""
         if i > j:
-            results.append((pairs, committed))
+            yield frozenset(), 0.0
             return
-        # Optimistic remaining lower bound = W[i][j]
-        if committed + W[i][j] > bound + 1e-6:
+        if W[i][j] > cap + EPS:
             return
-
-        # Option A: j unpaired
-        visit_W(i, j - 1, committed, pairs)
-
-        # Option B: stem (k, j) for various k.  v_cap = max energy we can spend
-        # on V[k][j] itself (everything else accounted for via W).
-        for k in range(i, j + 1):
-            if V[k][j] >= INF:
+        # i unpaired
+        yield from sub_W(i + 1, j, cap)
+        # i is the 5' partner of a stem closing at k; remainder is exterior.
+        # Prune on V[i][k] + rest lower bound (not V[i][k] alone — a weak stem
+        # can still belong to a very stable structure via the remainder).
+        for k in range(i + 1, j + 1):
+            if V[i][k] >= INF:
                 continue
-            left_lb = W[i][k - 1] if k > i else 0.0
-            v_cap = bound - committed - left_lb
-            if V[k][j] > v_cap + 1e-6:
+            rest_lb = W[k + 1][j] if k + 1 <= j else 0.0
+            if V[i][k] + rest_lb > cap + EPS:
                 continue
-            for v_pairs, v_e in _enum_V(seq, V, W, can, hp_fn, stack_e_fn, k, j, v_cap,
-                                       max_structures - len(results)):
-                new_pairs = pairs | v_pairs
-                visit_W(i, k - 1, committed + v_e, new_pairs)
-                if len(results) >= max_structures:
-                    return
+            for vp, ve in sub_V(i, k, cap - rest_lb):
+                for rp, re in sub_W(k + 1, j, cap - ve):
+                    yield vp | rp, ve + re
 
-    visit_W(0, n - 1, 0.0, frozenset())
+    # Drive the enumeration; deduplicate grammar-ambiguous repeats (keep min E).
+    seen: dict[frozenset, float] = {}
+    count = 0
+    for p, e in sub_W(0, n - 1, bound):
+        count += 1
+        if e <= bound + EPS:
+            cur = seen.get(p)
+            if cur is None or e < cur:
+                seen[p] = e
+        if count >= hard_cap:
+            break
 
-    # Deduplicate and sort
-    seen = {}
-    for p, e in results:
-        if p not in seen or e < seen[p]:
-            seen[p] = e
     items = sorted(seen.items(), key=lambda kv: kv[1])
-
     out: list[tuple[str, float, list[tuple[int, int]]]] = []
     for pset, e in items[:max_structures]:
         plist = sorted(pset)
-        out.append((to_dot_bracket(plist, n), e, plist))
+        out.append((_to_dot_bracket(plist, n, nicks, sep_char), e, plist))
     return out
-
-
-def _enum_V(seq, V, W, can, hp_fn, stack_fn, i, j, cap, remaining):
-    """Enumerate decompositions of V[i][j] whose total cost ≤ ``cap``.
-
-    ``cap`` is the absolute energy budget for V[i][j] itself.
-    """
-    if remaining <= 0:
-        return
-    if V[i][j] >= INF or V[i][j] > cap + 1e-6:
-        return
-
-    # 1. Hairpin
-    hp_e = hp_fn(i, j)
-    if hp_e <= cap + 1e-6:
-        yield frozenset([(i, j)]), hp_e
-
-    # 2. Stack (i+1, j-1)
-    if can(seq, i + 1, j - 1) and V[i + 1][j - 1] < INF:
-        stk = stack_fn(seq, i, j)
-        inner_cap = cap - stk
-        for inner_pairs, inner_e in _enum_V(seq, V, W, can, hp_fn, stack_fn,
-                                            i + 1, j - 1, inner_cap, remaining):
-            yield inner_pairs | {(i, j)}, stk + inner_e
-
-    # 3. Bifurcation: V[i][j] = V[i][k] + W[k+1][j-1]
-    for k in range(i + 1, j):
-        if k + 1 > j - 1 or V[i][k] >= INF:
-            continue
-        if V[i][k] + W[k + 1][j - 1] > cap + 1e-6:
-            continue
-        v_cap = cap - W[k + 1][j - 1]
-        for v_pairs, v_e in _enum_V(seq, V, W, can, hp_fn, stack_fn,
-                                    i, k, v_cap, remaining):
-            yield v_pairs | {(i, j)}, v_e + W[k + 1][j - 1]
-
-
-def _fold_matrices(seq, celsius, material):
-    """Re-derive the V/W matrices from the MFE DP (sans traceback table)."""
-    from strider.structure.mfe import (
-        _can_pair_fn, _stack_fn, _hairpin_energy, MIN_HAIRPIN_LOOP,
-    )
-    n = len(seq)
-    V = np.full((n, n), INF)
-    W = np.zeros((n, n))
-    can = _can_pair_fn(material)
-    stack_e = _stack_fn(material)
-
-    for length in range(1, n + 1):
-        for i in range(n - length + 1):
-            j = i + length - 1
-            if can(seq, i, j) and j - i > MIN_HAIRPIN_LOOP:
-                hp_e = _hairpin_energy(seq, i, j, celsius, material)
-                V[i][j] = hp_e
-                if can(seq, i + 1, j - 1) and j - i > MIN_HAIRPIN_LOOP + 1:
-                    e_stack = stack_e(seq, i, j) + V[i + 1][j - 1]
-                    if e_stack < V[i][j]:
-                        V[i][j] = e_stack
-                for k in range(i + 1, j):
-                    e_bif = V[i][k] + W[k + 1][j - 1] if k + 1 <= j - 1 else V[i][k]
-                    if e_bif < V[i][j]:
-                        V[i][j] = e_bif
-            W[i][j] = W[i][j - 1]
-            for k in range(i, j + 1):
-                if V[k][j] < INF:
-                    left = W[i][k - 1] if k > i else 0.0
-                    e = left + V[k][j]
-                    if e < W[i][j]:
-                        W[i][j] = e
-    return V, W

@@ -75,6 +75,31 @@ def fold_mfe(
     # ensemble DP; recursion makes the total scale with the number of pairs.
     from strider.thermo.salt import dg_per_bp_salt
     dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
+    V, W, WM, WM1, energy_fns = _build_mfe_matrices(seq, T, material, nicks, dg_salt)
+    (can, spans, inter, hairpin_e, stack_e, il_e, terminal_e,
+     ml_a, ml_b, ml_c) = energy_fns
+
+    # Traceback
+    pairs: list[tuple[int, int]] = []
+    _traceback_W(W, V, WM, WM1, seq, 0, n - 1, T, pairs,
+                 hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
+    pairs.sort()
+
+    energy = float(W[0][n - 1]) if n > 1 else 0.0
+    structure = _to_dot_bracket(pairs, n, nicks, sep_char)
+    return structure, energy, pairs
+
+
+def _build_mfe_matrices(seq, T, material, nicks, dg_salt):
+    """Fill and return the Zuker–Stiegler DP matrices for ``seq``.
+
+    Returns ``(V, W, WM, WM1, energy_fns)`` where ``energy_fns`` is the tuple
+    ``(can, spans, inter, hairpin_e, stack_e, il_e, terminal_e, ml_a, ml_b,
+    ml_c)``.  Factored out of :func:`fold_mfe` so the suboptimal enumerator in
+    :mod:`strider.structure.sampling` shares the exact same matrices and energy
+    closures — guaranteeing that the subopt MFE equals :func:`fold_mfe`.
+    """
+    n = len(seq)
     pairs_set = _wc_pairs(material)
     ml_a, ml_b, ml_c = _multiloop_params(material)
 
@@ -179,15 +204,9 @@ def fold_mfe(
                         w_best = cand
             W[i][j] = w_best
 
-    # Traceback
-    pairs: list[tuple[int, int]] = []
-    _traceback_W(W, V, WM, WM1, seq, 0, n - 1, T, pairs,
-                 hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
-    pairs.sort()
-
-    energy = float(W[0][n - 1]) if n > 1 else 0.0
-    structure = _to_dot_bracket(pairs, n, nicks, sep_char)
-    return structure, energy, pairs
+    energy_fns = (can, spans, inter, hairpin_e, stack_e, il_e, terminal_e,
+                  ml_a, ml_b, ml_c)
+    return V, W, WM, WM1, energy_fns
 
 
 # ─── traceback ────────────────────────────────────────────────────────────────

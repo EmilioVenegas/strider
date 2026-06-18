@@ -188,19 +188,31 @@ class ThermoEngine:
         from strider.structure.sampling import sample_structures
         return sample_structures(
             sequence, n_samples, celsius=self.celsius, material=self.material, seed=seed,
+            sodium_M=self.sodium, magnesium_M=self.magnesium,
         )
 
     def subopt(
         self,
-        sequence: str,
+        *sequences: str,
         gap: float = 1.0,
         max_structures: int = 200,
     ) -> list[tuple[str, float, list[tuple[int, int]]]]:
-        """Enumerate suboptimal structures within ``gap`` kcal/mol of the MFE."""
+        """Enumerate suboptimal structures within ``gap`` kcal/mol of the MFE.
+
+        Pass one strand for intramolecular folding, or several strands (or a
+        single ``'&'``/``'+'``-joined string) for a dimer / multi-strand complex
+        — e.g. ``subopt("AAAA", "TTTT")`` or ``subopt("AAAA&TTTT")``.  Each
+        returned dot-bracket carries strand separators; ``pair_list`` is indexed
+        over the concatenated sequence, consistent with :meth:`mfe`.
+        """
+        if not sequences:
+            raise ValueError("subopt requires at least one sequence")
+        seq = "&".join(sequences)
         from strider.structure.sampling import subopt_structures
         return subopt_structures(
-            sequence, gap=gap, celsius=self.celsius, material=self.material,
+            seq, gap=gap, celsius=self.celsius, material=self.material,
             max_structures=max_structures,
+            sodium_M=self.sodium, magnesium_M=self.magnesium,
         )
 
     def pairs(self, *sequences: str) -> np.ndarray:
