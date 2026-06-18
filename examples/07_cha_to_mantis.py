@@ -123,3 +123,13 @@ print("\n── Toehold kf sweep ───────────────�
 for nt in range(4, 13):
     kf = toehold_kf(nt, material="dna", celsius=37.0)
     print(f"  {nt:2d} nt → kf = {kf:.2e} M⁻¹s⁻¹")
+
+# ── 8. Whole-cascade figure (generic reaction renderer) ──────────────────────
+import matplotlib.pyplot as plt  # noqa: E402
+from strider.viz.reaction import draw_cascade  # noqa: E402
+
+fig_casc = draw_cascade(bridge, engine=engine, show_rates=True,
+                        title="CHA reaction cascade (miR-21)")
+fig_casc.savefig(_here / "cha_cascade.png", dpi=150, bbox_inches="tight")
+plt.close(fig_casc)
+print("\n  Saved: cha_cascade.png")

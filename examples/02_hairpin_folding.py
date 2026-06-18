@@ -27,6 +27,7 @@ from strider.structure.mfe import fold_mfe
 from strider.structure.pseudoknot import fold_pseudoknot
 from strider.viz.arc import arc_diagram
 from strider.viz.mountain_plot import mountain_plot
+from strider.viz.structure2d import draw_structure
 
 _here = pathlib.Path(__file__).parent
 
@@ -96,6 +97,15 @@ mountain_plot(BEACON_GC, engine=engine_native, ax=axes[1][1],
 plt.tight_layout()
 fig.savefig(_here / "hairpin_folding.png", dpi=150, bbox_inches="tight")
 print("\nSaved: hairpin_folding.png")
+
+# Native 2D folds (no ViennaRNA): the two beacons drawn as proper stem-loops
+fig2, axes2 = plt.subplots(1, 2, figsize=(12, 6))
+fig2.suptitle("strider — native 2D secondary structures", fontsize=13)
+draw_structure(BEACON_AT, engine=engine_native, ax=axes2[0], title="BEACON_AT (AT stem)")
+draw_structure(BEACON_GC, engine=engine_native, ax=axes2[1], title="BEACON_GC (GC stem)")
+fig2.tight_layout()
+fig2.savefig(_here / "hairpin_structure2d.png", dpi=150, bbox_inches="tight")
+print("Saved: hairpin_structure2d.png")
 
 # ── 5. Temperature scan: stem stability vs temperature ───────────────────────
 # BEACON_GC (stronger stem) is expected to remain folded to higher temperatures.
