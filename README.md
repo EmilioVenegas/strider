@@ -54,6 +54,7 @@ Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for mult
    - [Surface transducer, LOD, and surface ΔG](#18-surface-transducer-lod-and-surface-δg)
    - [G-quadruplex / aptamer folding](#19-g-quadruplex--aptamer-folding)
    - [Low-copy stochastic capture — shot-noise-limited LOD](#20-low-copy-stochastic-capture--shot-noise-limited-lod)
+   - [Visualization](#21-visualization)
 6. [API reference](#api-reference)
 7. [Examples](#examples)
 8. [Backend comparison](#backend-comparison)
@@ -87,6 +88,7 @@ pip install strider-dna[mantis]   # mantis-delta integration (circuit templates,
 pip install strider-dna[pandas]   # SweepResult.to_dataframe()
 pip install strider-dna[parallel] # ProcessPoolExecutor sweeps
 pip install strider-dna[diff]     # PyTorch — gradient-based differentiable design
+pip install strider-dna[viz]      # visualization (matplotlib ≥ 3.6)
 pip install strider-dna[full]     # all of the above
 ```
 
@@ -237,6 +239,28 @@ $ strider cotx GGGAAACCCAAAGGG --min-length 5 --material rna
 # CHA / circuit verification from a JSON sequence spec
 $ strider verify cha_spec.json
 ```
+
+### `strider draw` — visualization
+
+```bash
+# 2D secondary structure (folds automatically; --structure for explicit dot-bracket)
+$ strider draw structure GCGCAAAAGCGC -o hairpin.png
+$ strider draw structure GCGCAAAAGCGC --color accessibility -o hairpin_acc.png
+
+# Multi-strand complex
+$ strider draw complex AAACCC GGGTTT --structure "(((&)))" --names H1 H2 -o complex.png
+
+# Toehold-accessibility track with domain annotations
+$ strider draw accessibility TCAACATCAGTCTGATAAGG --domains '{"toehold": [0, 6]}' -o acc.png
+
+# Arc diagram (base-pair probabilities)
+$ strider draw arc GCGCAAAAGCGC --color-by probability --min-prob 0.05 -o arc.png
+
+# CHA reaction cascade from a JSON spec
+$ strider draw reaction --spec cha_spec.json --rates -o cascade.png
+```
+
+All `draw` subcommands accept `--out` (required), `--dpi`, `--title`, and the standard thermo flags (`--celsius`, `--material`, etc.). The output format (PNG, SVG, PDF) is inferred from the file extension.
 
 All commands accept `--celsius`, `--material {dna,rna}`, `--sodium`, `--magnesium`, and `--backend` where relevant. Run `strider <cmd> --help` for full options.
 
@@ -1673,6 +1697,101 @@ The captured mean is capped at the molecule budget (`μ = N_total·(1 − exp(�
 
 ---
 
+### 21. Visualization
+
+The `strider.viz` subsystem renders publication-quality figures from strider data structures — secondary structures, multi-strand complexes, reaction cascades, accessibility tracks, arc diagrams, mountain plots, and energy landscapes — using only matplotlib. All viz functions are **lazily imported** from the top-level `strider` namespace, so `import strider` never pulls in matplotlib unless you actually call a drawing function.
+
+#### 2D secondary structure
+
+`draw_structure` takes a sequence (with optional `&`/`+` strand separators) and renders it as a proper stem-loop diagram: radial layout, backbone segments, base-pair rungs, colored base circles, strand labels, and per-strand position numbers. If no structure is provided, it folds via the engine's MFE:
+
+```python
+from strider import ThermoEngine, draw_structure, draw_complex
+
+engine = ThermoEngine(material='dna', celsius=37)
+
+# Single strand — auto-folds and draws
+ax = draw_structure('GCGCAAAAGCGC', engine=engine, title='Simple hairpin')
+ax.figure.savefig('hairpin.png', dpi=150, bbox_inches='tight')
+
+# Color by toehold accessibility (ensemble-weighted unpaired probability)
+from strider.viz.annotate import per_position_accessibility
+acc = per_position_accessibility('TCAACATCAGTCTGATAAGG', engine)
+ax = draw_structure('TCAACATCAGTCTGATAAGG', engine=engine, color='accessibility',
+                    accessibility=acc, title='H1 accessibility')
+```
+
+Coloring modes: `"structure"` (stem/loop/bulge elements), `"nt"` (nucleotide identity), `"strand"` (per-strand), `"accessibility"` (unpaired probability heatmap). `"auto"` picks `"strand"` for multi-strand sequences, `"structure"` for single strands.
+
+#### Multi-strand complexes
+
+`draw_complex` is the multi-strand convenience wrapper. Pass a list of sequences (or a `Complex` from the tube API) and it folds and draws them with per-strand coloring:
+
+```python
+H1 = 'TCAACATCAGTCTGATAAGGAGGGAGGTTATCAGACTGA'
+H2 = 'TCAGTCTGATAAGGAGGGAGGTATCAGACTGATGTTGATTTTT'
+ax = draw_complex([H1, H2], engine=engine, names=['H1', 'H2'],
+                  title='H1·H2 duplex')
+```
+
+Use `strand_colors={'H1': '#ef5350', 'H2': '#42a5f5'}` (or a list) to fix strand colors across panels.
+
+#### Reaction cascades
+
+`draw_cascade` renders a reaction pathway as a stack of reactant → product panels with ΔΔG and rate annotations. It accepts a `CHABridge`, a `CHA` template, an `EnumerationResult`, or an explicit list of `(reactants, products, meta)` tuples:
+
+```python
+from strider import CHA, draw_cascade
+
+cha = CHA(sequences={...}, engine=engine)
+fig = draw_cascade(cha, engine=engine, show_rates=True, title='CHA cascade')
+fig.savefig('cascade.png', dpi=150, bbox_inches='tight')
+```
+
+Each species with resolvable sequences is drawn as a folded 2-D structure; abstract species get a labeled box. Strand colors are stable across panels (same strand = same color everywhere).
+
+#### Accessibility track
+
+`draw_accessibility_track` renders a 1-D heatmap of per-position unpaired probability, optionally annotated with named domain brackets:
+
+```python
+from strider import draw_accessibility_track
+
+ax = draw_accessibility_track(
+    'TCAACATCAGTCTGATAAGG', engine=engine,
+    domains={'toehold': (0, 6), 'stem': (6, 20)},
+    title='H1 toehold accessibility',
+)
+```
+
+#### Arc diagrams, mountain plots, and energy landscapes
+
+The existing `arc_diagram`, `mountain_plot`, and `energy_landscape` functions have been updated to use the shared `strider.viz.style` palette for visual consistency:
+
+```python
+from strider import arc_diagram, mountain_plot, energy_landscape
+
+# Arc diagram with strand-based coloring for a multi-strand complex
+ax = arc_diagram('AAACCC&GGGTTT', '(((&)))', color_by='strand')
+
+# Mountain plot with ensemble pair probabilities
+ax = mountain_plot('GCGCAAAAGCGC', engine=engine)
+
+# Energy landscape along a reaction pathway
+ax = energy_landscape(
+    pathway=[('H1', -3.2), ('m·H1', -11.7), ('H1·H2', -18.5)],
+    barriers={'R1': 4.2, 'R2': 5.1},
+)
+```
+
+#### Shared style and customization
+
+`strider.viz.style` defines the colour palette, nucleotide colours, strand cycle, and a `style_context()` context manager for globally adjusting font sizes and line widths. All viz functions use this shared palette, so figures are visually consistent out of the box.
+
+> **Lazy imports.** All viz names (`draw_structure`, `draw_complex`, `draw_cascade`, `arc_diagram`, `mountain_plot`, `energy_landscape`, `draw_accessibility_track`, `cha_circuit`, `layout_structure`) are available via `from strider import ...` — they pull in matplotlib only when first accessed. If matplotlib is missing, accessing them raises a clear hint to `pip install 'strider-dna[viz]'`.
+
+---
+
 ## API reference
 
 ### `ThermoEngine`
@@ -2033,6 +2152,15 @@ python examples/06_parameter_sweep.py
 python examples/07_cha_to_mantis.py    # requires mantis-delta
 python examples/08_tube_analysis.py
 python examples/09_dynamical_design.py  # requires mantis-delta
+python examples/13_complex_and_cascade.py
+python examples/14_gallery_hairpin.py   # gallery: various motifs
+python examples/15_gallery_multiloop.py
+python examples/16_gallery_toehold.py
+python examples/17_gallery_captured.py
+python examples/18_gallery_bulge.py
+python examples/19_gallery_fourway.py
+python examples/20_gallery_fiveway.py
+python examples/21_gallery_dendrimer.py
 ```
 
 ### `01_dna_thermodynamics.py` — NN model fundamentals
@@ -2090,6 +2218,14 @@ Chains `fold_quadruplex` / `quadruplex_ensemble` (the §19 G4 layer) into the §
 ### `12_shot_noise_lod.py` — Shot-noise-limited detection
 
 Contrasts the deterministic surface LOD with the §20 stochastic one. The deterministic transducer's infinite-reservoir assumption "captures" thousands of molecules at concentrations where only a handful exist, giving an LOD ~10³× too optimistic; the `StochasticSurfaceModel` caps capture at the molecule budget, applies the Currie counting-statistics detection limit, and drives the capture as a mantis Gillespie SSA — exposing the Poisson shot-noise floor that actually limits the assay.
+
+### `13_complex_and_cascade.py` — Multi-strand complex + reaction cascade
+
+Demonstrates `draw_complex` for a multi-strand H1·H2·CP complex and `draw_cascade` for the full CHA reaction pathway. Shows how strand colors are kept consistent across panels (same sequence = same color in every reactant/product structure).
+
+### `14–21` Gallery scripts — Visualization motifs
+
+A set of gallery scripts, each showcasing `draw_structure` or `draw_complex` on a different structural motif: hairpin (`14`), multiloop (`15`), toehold exchange (`16`), captured state (`17`), bulge loop (`18`), fourway junction (`19`), fiveway junction (`20`), and dendrimer network (`21`). Each generates a publication-quality PNG.
 
 ---
 
