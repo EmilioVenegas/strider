@@ -420,9 +420,11 @@ def subopt_structures(
             return
         # i unpaired
         yield from sub_W(i + 1, j, cap)
-        # i is the 5' partner of a stem closing at k; remainder is exterior
+        # i is the 5' partner of a stem closing at k; remainder is exterior.
+        # Prune on V[i][k] + rest lower bound (not V[i][k] alone — a weak stem
+        # can still belong to a very stable structure via the remainder).
         for k in range(i + 1, j + 1):
-            if V[i][k] >= INF or V[i][k] > cap + EPS:
+            if V[i][k] >= INF:
                 continue
             rest_lb = W[k + 1][j] if k + 1 <= j else 0.0
             if V[i][k] + rest_lb > cap + EPS:

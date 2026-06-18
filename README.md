@@ -574,7 +574,7 @@ print(f"Structure distance: {dist:.3f}")
 
 ### 4. Boltzmann sampling and subopt enumeration
 
-When the MFE structure alone misrepresents the ensemble (e.g. competing folds within a few kcal/mol of the optimum), two routines on top of the partition function help inspect what's really happening.
+When the MFE structure alone misrepresents the ensemble (e.g. competing folds within a few kcal/mol of the optimum), two routines help inspect what's really happening: Boltzmann sampling over the partition function, and exhaustive suboptimal enumeration over the MFE DP.
 
 #### Boltzmann sampling
 
@@ -596,20 +596,31 @@ for db, n in counts.most_common(5):
 
 #### Suboptimal-structure enumeration
 
-Enumerate *all* structures within `gap` kcal/mol of the MFE (Wuchty-style worklist over the V/W matrices, energy-pruned):
+Enumerate *all* structures within `gap` kcal/mol of the MFE. The enumerator is a Wuchty-style recursion over the **same nick-aware V/W/WM/WM1 matrices `fold_mfe` uses** (hairpins, internal loops/bulges, multiloops, inter-strand pairs, salt correction), so the lowest-energy structure it returns is identical to `fold_mfe` — `subopt` and `mfe` cannot drift apart:
 
 ```python
 from strider import subopt_structures
 
 for db, e, _ in subopt_structures('GCGCAAAAGCGC', gap=3.0, max_structures=20):
     print(f"{e:7.3f}  {db}")
-# -2.350  ((((....))))
-# -0.110  .(((....))).
-# -0.010  (((......)))
-#  0.000  ............
+# -3.250  ((((....))))
+# -1.410  (((......)))
+# -1.010  .(((....))).
 ```
 
-Both procedures are also exposed as engine methods (`engine.sample(seq, n)` and `engine.subopt(seq, gap)`) for use inside design objectives.
+**Multi-strand / dimers.** Pass `'&'`-joined strands (or several strands via the engine) to enumerate dimer / complex structures; dot-brackets carry the strand separator and `pair_list` is indexed over the concatenated sequence (matching `mfe`):
+
+```python
+for db, e, _ in subopt_structures('GCGCAATTGCGC&GCGCAATTGCGC', gap=3.0):
+    print(f"{e:7.2f}  {db}")
+# -19.08  ((((((((((((&))))))))))))   ← full inter-strand duplex
+# -16.84  .(((((((((((&))))))))))).
+# ...
+```
+
+Salt (`sodium_M` / `magnesium_M`) is applied per closed base pair, so both routines track [Na⁺]/[Mg²⁺]; at the 1 M Na⁺ / 0 Mg²⁺ reference the correction is exactly zero.
+
+Both procedures are also exposed as engine methods — `engine.sample(seq, n)` and `engine.subopt(*strands, gap=…)` (which inherit the engine's salt/temperature) — for use inside design objectives.
 
 ---
 
@@ -1699,7 +1710,7 @@ ThermoEngine(
 | `pairs(*sequences)` | `np.ndarray` | Pair-probability matrix only |
 | `ensemble_defect(seqs, target_structure, normalize=True)` | `float` | Expected mispaired nucleotides vs a target dot-bracket |
 | `sample(seq, n_samples, seed=None)` | `list[(str, list)]` | Boltzmann-sampled structures |
-| `subopt(seq, gap=1.0, max_structures=200)` | `list[(str, float, list)]` | Suboptimal structures within `gap` of MFE |
+| `subopt(*sequences, gap=1.0, max_structures=200)` | `list[(str, float, list)]` | Suboptimal structures within `gap` of MFE (single- or multi-strand; shares `mfe`'s DP) |
 | `duplex_dg(seq1, seq2=None)` | `float` | ΔG of hybridization; `seq2=None` → intramolecular folding |
 | `ddg(reactants, products)` | `float` | ΔΔG = Σ G(products) − Σ G(reactants) (kcal/mol) |
 | `toehold_accessibility(seq, positions)` | `float` | Fraction of ensemble with all toehold positions unpaired |
@@ -2178,7 +2189,7 @@ The full suite (`pytest -m "slow or not slow"`) is **477 passed, 1 xfailed, 17 s
 | `test_tmsd.py` | 15 | toehold_kf table, Arrhenius correction, detailed balance, leakage_kf, Keq conversions |
 | `test_design.py` | 19 | SequenceDesigner SA convergence, DomainSpec, hard constraints, ensemble defect, MutationAnalyzer |
 | `test_mfe.py` | 16 | fold_mfe correctness, Zuker full-loop energetics, dot-bracket parsing, mountain vectors |
-| `test_sampling.py` | 11 | Boltzmann sampling distribution, subopt enumeration, energy gap correctness |
+| `test_sampling.py` | 20 | Boltzmann sampling distribution, subopt enumeration (incl. multi-strand + brute-force completeness), `subopt[0]==fold_mfe` consistency, salt responsiveness, energy gap correctness |
 | `test_equilibrium.py` | 17 | concentration solver convergence, σ correction, water-molarity standard state |
 | `test_tube.py` | 29 | Strand / Complex / SetSpec / ComplexSet / Tube / TubeResult / tube_analysis driver |
 | `test_parameter_sets.py` | 31 | native ParameterSet adapter, Turner-schema JSON round-trip, engine integration, advanced-table overrides (dangle, terminal mismatch, interior_1_1, hairpin tetraloop, coaxial stack) and the bundled `dna-low-salt-50mM-Na.json` curated set |
