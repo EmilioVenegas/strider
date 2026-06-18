@@ -5,6 +5,46 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [0.9.0] - 2026-06-18
+
+### Features
+
+- **sampling:** Add multi-strand support to subopt enumeration
+
+    Allow subopt to accept multiple sequences or '&'-joined strings for
+    complexes. Fix pruning logic in the Wuchty-style recursion to prevent
+    missing valid structures and ensure consistency with fold_mfe.
+
+    Add comprehensive tests for brute-force completeness, salt
+    responsiveness, and multi-strand complexes.
+
+
+### Refactor
+
+- **structure:** Extract MFE matrix construction into shared helper
+
+    Move Zuker–Stiegler DP matrix filling to _build_mfe_matrices. This allows
+    the suboptimal enumerator in the sampling module to share the same
+    matrices and energy closures, ensuring consistent results.
+
+- **structure:** Rewrite suboptimal enumerator with grammar-based recursion
+
+    Replace the DFS-based _enum_suboptimal + _enum_V pair with a recursive
+    grammar decomposition (sub_W / sub_WM / sub_WM1 / sub_V).  Each DP
+    matrix now has its own generator that yields (pair-set, energy) tuples
+    via inductive rules mirroring the Zuker–Stiegler recurrence.
+
+    Key improvements:
+    - Multi-strand support: nicks are respected throughout, and the
+      dot-bracket output uses the separator character from _to_dot_bracket.
+    - Internal loops and multi-loops are now properly enumerated instead of
+      being approximated via bifurcation.
+    - A hard_cap parameter bounds total generator steps to prevent
+      combinatorial blow-up on long sequences.
+    - Deduplication is done at the driver level (seen dict) rather than via
+      a post-hoc pass.
+
+
 ## [0.8.0] - 2026-06-18
 
 ### Documentation
