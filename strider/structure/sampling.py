@@ -252,6 +252,8 @@ def subopt_structures(
     celsius: float = 37.0,
     material: str = "dna",
     max_structures: int = 200,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
 ) -> list[tuple[str, float, list[tuple[int, int]]]]:
     """
     Enumerate suboptimal structures within ``gap`` kcal/mol of the MFE.
@@ -272,7 +274,7 @@ def subopt_structures(
 
     # Re-run fold_mfe internals to get V and W; we re-compute here so we
     # don't have to alter the public fold_mfe signature.
-    V, W = _fold_matrices(seq, celsius, material)
+    V, W = _fold_matrices(seq, celsius, material, sodium_M, magnesium_M)
     mfe = float(W[0][n - 1])
     bound = mfe + gap
 
@@ -280,6 +282,8 @@ def subopt_structures(
 
     can = _can_pair_fn(material)
     stack_e_fn = _stack_fn(material)
+    from strider.thermo.salt import dg_per_bp_salt
+    dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
 
     def hp_fn(i, j):
         return _hairpin_energy(seq, i, j, celsius, material)
@@ -308,7 +312,7 @@ def subopt_structures(
             if V[k][j] > v_cap + 1e-6:
                 continue
             for v_pairs, v_e in _enum_V(seq, V, W, can, hp_fn, stack_e_fn, k, j, v_cap,
-                                       max_structures - len(results)):
+                                       max_structures - len(results), dg_salt):
                 new_pairs = pairs | v_pairs
                 visit_W(i, k - 1, committed + v_e, new_pairs)
                 if len(results) >= max_structures:
@@ -330,10 +334,10 @@ def subopt_structures(
     return out
 
 
-def _enum_V(seq, V, W, can, hp_fn, stack_fn, i, j, cap, remaining):
+def _enum_V(seq, V, W, can, hp_fn, stack_fn, i, j, cap, remaining, dg_salt):
     """Enumerate decompositions of V[i][j] whose total cost ≤ ``cap``.
 
-    ``cap`` is the absolute energy budget for V[i][j] itself.
+    ``cap`` is the salt-inclusive absolute energy budget for V[i][j].
     """
     if remaining <= 0:
         return
@@ -341,17 +345,18 @@ def _enum_V(seq, V, W, can, hp_fn, stack_fn, i, j, cap, remaining):
         return
 
     # 1. Hairpin
-    hp_e = hp_fn(i, j)
+    hp_e = hp_fn(i, j) + dg_salt
     if hp_e <= cap + 1e-6:
         yield frozenset([(i, j)]), hp_e
 
     # 2. Stack (i+1, j-1)
     if can(seq, i + 1, j - 1) and V[i + 1][j - 1] < INF:
         stk = stack_fn(seq, i, j)
-        inner_cap = cap - stk
-        for inner_pairs, inner_e in _enum_V(seq, V, W, can, hp_fn, stack_fn,
-                                            i + 1, j - 1, inner_cap, remaining):
-            yield inner_pairs | {(i, j)}, stk + inner_e
+        inner_cap = cap - stk - dg_salt
+        if inner_cap >= -1e-6:
+            for inner_pairs, inner_e in _enum_V(seq, V, W, can, hp_fn, stack_fn,
+                                                i + 1, j - 1, inner_cap, remaining, dg_salt):
+                yield inner_pairs | {(i, j)}, stk + inner_e + dg_salt
 
     # 3. Bifurcation: V[i][j] = V[i][k] + W[k+1][j-1]
     for k in range(i + 1, j):
@@ -359,37 +364,42 @@ def _enum_V(seq, V, W, can, hp_fn, stack_fn, i, j, cap, remaining):
             continue
         if V[i][k] + W[k + 1][j - 1] > cap + 1e-6:
             continue
-        v_cap = cap - W[k + 1][j - 1]
+        v_cap = cap - W[k + 1][j - 1] - dg_salt
+        if v_cap < -1e-6:
+            continue
         for v_pairs, v_e in _enum_V(seq, V, W, can, hp_fn, stack_fn,
-                                    i, k, v_cap, remaining):
-            yield v_pairs | {(i, j)}, v_e + W[k + 1][j - 1]
+                                    i, k, v_cap, remaining, dg_salt):
+            yield v_pairs | {(i, j)}, v_e + W[k + 1][j - 1] + dg_salt
 
 
-def _fold_matrices(seq, celsius, material):
+def _fold_matrices(seq, celsius, material, sodium_M=1.0, magnesium_M=0.0):
     """Re-derive the V/W matrices from the MFE DP (sans traceback table)."""
     from strider.structure.mfe import (
         _can_pair_fn, _stack_fn, _hairpin_energy, MIN_HAIRPIN_LOOP,
     )
+    from strider.thermo.salt import dg_per_bp_salt
     n = len(seq)
     V = np.full((n, n), INF)
     W = np.zeros((n, n))
     can = _can_pair_fn(material)
     stack_e = _stack_fn(material)
+    dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
 
     for length in range(1, n + 1):
         for i in range(n - length + 1):
             j = i + length - 1
             if can(seq, i, j) and j - i > MIN_HAIRPIN_LOOP:
                 hp_e = _hairpin_energy(seq, i, j, celsius, material)
-                V[i][j] = hp_e
+                v_best = hp_e
                 if can(seq, i + 1, j - 1) and j - i > MIN_HAIRPIN_LOOP + 1:
                     e_stack = stack_e(seq, i, j) + V[i + 1][j - 1]
-                    if e_stack < V[i][j]:
-                        V[i][j] = e_stack
+                    if e_stack < v_best:
+                        v_best = e_stack
                 for k in range(i + 1, j):
                     e_bif = V[i][k] + W[k + 1][j - 1] if k + 1 <= j - 1 else V[i][k]
-                    if e_bif < V[i][j]:
-                        V[i][j] = e_bif
+                    if e_bif < v_best:
+                        v_best = e_bif
+                V[i][j] = v_best + dg_salt
             W[i][j] = W[i][j - 1]
             for k in range(i, j + 1):
                 if V[k][j] < INF:
