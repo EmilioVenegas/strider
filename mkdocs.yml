@@ -32,5 +32,6 @@ plugins:
 
 nav:
   - Home: index.md
+  - Visualization: visualization.md
   - Known limitations: limitations.md
   - API Reference: api.md

@@ -73,3 +73,45 @@ This page contains the auto-generated documentation for the `strider` source cod
 ::: strider.structure.pseudoknot.fold_pseudoknot
     options:
       show_root_heading: true
+
+## Visualization
+
+::: strider.viz.structure2d.draw_structure
+    options:
+      show_root_heading: true
+
+::: strider.viz.structure2d.draw_complex
+    options:
+      show_root_heading: true
+
+::: strider.viz.reaction.draw_cascade
+    options:
+      show_root_heading: true
+
+::: strider.viz.reaction.draw_reaction_step
+    options:
+      show_root_heading: true
+
+::: strider.viz.annotate.draw_accessibility_track
+    options:
+      show_root_heading: true
+
+::: strider.viz.annotate.per_position_accessibility
+    options:
+      show_root_heading: true
+
+::: strider.viz.arc.arc_diagram
+    options:
+      show_root_heading: true
+
+::: strider.viz.mountain_plot.mountain_plot
+    options:
+      show_root_heading: true
+
+::: strider.viz.mountain_plot.energy_landscape
+    options:
+      show_root_heading: true
+
+::: strider.viz.layout.layout_structure
+    options:
+      show_root_heading: true
