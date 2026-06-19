@@ -824,10 +824,12 @@ A, B, C = "GGAATTCCGTAC", "ACGTGGCATTAC", "TGCATGCAAGCT"
 ring = [rc(A) + B, rc(B) + C, rc(C) + A]          # closed 3-strand triangle
 import itertools
 print({round(eng.mfe(*p).energy, 3) for p in itertools.permutations(ring)})
-# {-39.542}  ← identical from all 6 orderings
+# {-35.622}  ← identical from all 6 orderings
 ```
 
 The winning permutation is reported as `MFEResult.strand_order` (new slot → input strand index); `structure`/`base_pairs`/`sequence` are expressed in that order, since a structure nested in the winning order may be pseudoknotted in the caller's. `engine.subopt` (§4) is order-invariant the same way.
+
+The multi-strand **complex free energy** (`engine.pfunc`, and therefore `ddg` and the tube concentrations) includes, beyond the loop energies: the σ rotational-symmetry term; the bimolecular association penalty `(L−1)·ΔG_assoc` (DNA 1.96 / RNA 4.09 kcal/mol per association, from `JOIN_PENALTY` — the same term NUPACK puts in its complex free energy); and a coaxial-stacking correction at flush strand nicks. Single-strand folding matches NUPACK to ≈0.05 kcal/mol; for multi-strand complexes a residual ensemble-breadth gap remains (NUPACK's dangle/coaxial ensemble stabilises partial microstates more) — see [`docs/limitations.md`](docs/limitations.md).
 
 #### Low-level solver
 
