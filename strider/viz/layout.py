@@ -58,8 +58,11 @@ def layout_structure(
     pairs: list[tuple[int, int]] | None = None,
     nicks: list[int] | None = None,
     relax_iters: int = 0,
+    repel_range: float = 0.85,
+    method: str = "auto",
     spacing: float = 1.0,
     rise: float = 1.0,
+    loop_tightness: float = 1.5,
 ) -> Layout2D:
     """
     Compute drawable 2D geometry for ``sequence``.
@@ -73,7 +76,16 @@ def layout_structure(
                   (overrides ``structure``)
     nicks       : explicit strand breaks; inferred from separators otherwise
     relax_iters : spring-relaxation iterations (auto-skipped for tiny structures;
-                  pass 0 to disable)
+                  pass 0 to disable). Only applied to the ``radial`` method — the
+                  ``tree`` method is overlap-free by construction.
+    method      : ``"radial"`` (simple RNAplot-style), ``"tree"`` (space-aware
+                  loop-tree, spreads multi-junction networks), or ``"auto"``
+                  (default: ``tree`` for branched / >=3-strand structures, else
+                  ``radial`` so simple folds keep their compact look)
+    loop_tightness : margin multiplier on each sub-tree's angular wedge in the
+                  ``tree`` layout (default 1.5); lower it to shrink multiloop
+                  radii and pull long junction linkers in (too low → arms collide).
+                  No effect on the ``radial`` layout.
     """
     # resolve strand breaks + clean concatenated sequence
     if nicks is None:
@@ -89,11 +101,28 @@ def layout_structure(
     pairs = [(i, j) for i, j in pairs if 0 <= i < n and 0 <= j < n]
 
     nested, crossing = _geom.classify_pairs(pairs)
-    coords = _geom.radial_layout(nested, n, nicks, spacing=spacing, rise=rise)
-    if relax_iters and n > 40:
-        coords = _geom.relax(coords, nested, nicks, iterations=relax_iters, spacing=spacing)
-
     nick_set = set(nicks)
+    if method == "auto":
+        # Prefer the simple, compact radial layout; only fall back to the
+        # space-aware tree layout when radial would actually overlap (a branched
+        # structure whose arms collide). This keeps already-clean radial drawings
+        # untouched and reserves the tree layout for the cases that need it.
+        coords = _geom.radial_layout(nested, n, nicks, spacing=spacing, rise=rise)
+        if _geom.is_branched(nested, n, nicks):
+            segs = ([(i, i + 1) for i in range(n - 1) if (i + 1) not in nick_set]
+                    + nested)
+            if _geom.has_segment_crossing(coords, segs):
+                coords = _geom.tree_layout(nested, n, nicks, spacing=spacing,
+                                           rise=rise, safety=loop_tightness)
+    elif method == "tree":
+        coords = _geom.tree_layout(nested, n, nicks, spacing=spacing, rise=rise,
+                                   safety=loop_tightness)
+    else:
+        coords = _geom.radial_layout(nested, n, nicks, spacing=spacing, rise=rise)
+        if relax_iters and n > 40:
+            coords = _geom.relax(coords, nested, nicks, iterations=relax_iters,
+                                 spacing=spacing, repel_range=repel_range)
+
     backbone = [(i, i + 1) for i in range(n - 1) if (i + 1) not in nick_set]
     strand_of, strand_lens = _strand_of(n, nicks)
 

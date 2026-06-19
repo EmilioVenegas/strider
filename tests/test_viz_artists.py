@@ -68,6 +68,23 @@ class TestDrawComplex:
         assert ax.get_aspect() == 1.0
         plt.close(ax.figure)
 
+    def test_reorder_flattens_pseudoknotted_complex(self):
+        # 4 strands; pairs join strand 0<->2 and 1<->3, which interleave in the
+        # input order (drawn as dashed pseudoknot chords) but are flat once the
+        # strands are reordered.  No engine needed: structure is explicit.
+        strands = ["GC", "GC", "GC", "GC"]
+        struct = "((&[[&))&]]"
+
+        def n_chords(ax):
+            return sum(1 for ln in ax.lines if ln.get_linestyle() == "--")
+
+        kept = draw_complex(strands, structure=struct, reorder=False, relax_iters=0)
+        flat = draw_complex(strands, structure=struct, reorder=True, relax_iters=0)
+        assert n_chords(kept) > 0    # crossings remain in input order
+        assert n_chords(flat) == 0   # reorder removed them
+        plt.close(kept.figure)
+        plt.close(flat.figure)
+
 
 class TestAccessibilityTrack:
     def test_track_renders_with_domains(self, engine):
