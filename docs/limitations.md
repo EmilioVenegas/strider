@@ -40,17 +40,35 @@ judge fit. These fall into two groups.
   order) that is order-invariant in practice but not guaranteed to find the global optimum for large
   fused networks (e.g. a 6-strand dendrimer). The partition function (`engine.pfunc`) is **not yet
   order-invariant** — it still folds the supplied order.
-- **Multi-strand ensemble breadth (the residual NUPACK gap).** strider applies the per-association
-  `(L−1)·ΔG_assoc` term (DNA 1.96 / RNA 4.09), the same one NUPACK includes in its complex free
-  energy (verified: zeroing NUPACK's `join_penalty` shifts its complex ΔG by exactly `(L−1)·1.96`),
-  plus a coaxial-stacking correction at flush strand nicks. The residual gap vs NUPACK is the
-  **multi-strand ensemble breadth**: NUPACK's dangle/coaxial-stacking ensemble stabilises partial /
-  frayed multi-strand microstates more than strider's model, broadening its partition function (e.g.
-  a 10-bp dimer: NUPACK −2.8 kcal/mol of ensemble broadening vs strider −0.2). Single-strand folding
-  matches NUPACK to ≈0.05 kcal/mol; the deficit appears only for multi-strand complexes and grows with
-  strand/junction count. The coaxial-junction part is recovered (a coaxial junction contributes
-  ≈ −2 kcal/mol that strider previously omitted); the broadening part remains. See
-  `STRIDER_VS_NUPACK.md`.
+- **Multi-strand absolute-ΔG offset vs NUPACK (a convention difference, *not* ensemble breadth).**
+  strider applies the per-association `(L−1)·ΔG_assoc` term (DNA 1.96 / RNA 4.09), the same one
+  NUPACK includes in its complex free energy (verified: zeroing NUPACK's `join_penalty` shifts its
+  complex ΔG by exactly `(L−1)·1.96`), plus a coaxial-stacking correction at flush strand nicks.
+  The dominant residual vs NUPACK was previously characterised here as "ensemble breadth"; closer
+  analysis (`STRIDER_VS_NUPACK.md` Part III·K and `scratch/probe_*`) shows it is instead a
+  **sequence- and length-independent per-helix-terminus free-energy offset**: NUPACK assigns each
+  helix terminus an extra **≈ −1.24 kcal/mol** (≈ −2.47 per blunt duplex, *exactly* constant across
+  all four closing-pair identities and every tested length). The evidence that it is **structural,
+  not partition-function broadening**: (i) it is present in NUPACK's **`nostacking`** ensemble and
+  in its MFE *structure* energy, not only its pfunc; (ii) it does **not** cancel in **binding** ΔG
+  (`G(complex) − ΣG(strand)` still differs ~2.5–4 kcal/mol per duplex); (iii) it is exactly
+  proportional to a structural count (exterior-facing helix termini), with no sequence dependence
+  beyond the standard +0.05 terminal-AT penalty. strider's native backend follows the
+  **SantaLucia 1998/2004** nearest-neighbour initiation (≈ +1.96 per duplex), the experimentally-fit,
+  IDT/qPCR-aligned convention; **ViennaRNA** sits at an *intermediate* offset (~ −1.0 per duplex,
+  not −2.47), so the three tools disagree among themselves — this is a parameterisation /
+  reference-state convention for terminal-initiation free energy, **not** a universal physical term
+  strider lacks. Matching NUPACK's *absolute* complex (and binding) ΔG would require **adding** the
+  ≈ −1.24/terminus offset, which would move strider's duplex ΔG ~2.4 kcal/mol *away* from the
+  SantaLucia experimental baseline. A genuinely separate, much smaller component (~ −0.6 kcal/mol
+  per duplex) is real **ensemble breadth**: NUPACK's `stacking` dangle/coaxial sub-ensemble broadens
+  its pfunc below its own `nostacking` value (−0.77/dimer) more than strider's leading-order model
+  does (−0.17/dimer). Single-strand folding (hairpins, internal loops, nested structures) matches
+  NUPACK's `stacking` ensemble to ≈0.05–0.4 kcal/mol — strider's hairpin/loop energies already
+  absorb the per-terminus term for the single exterior terminus of a folded strand; the deficit
+  surfaces only for the *extra* exterior termini that multi-strandedness (nicks) introduces. The
+  coaxial-junction part is separately recovered (a flush coaxial junction contributes ≈ −2 kcal/mol
+  that strider's nick-aware DP omits). See `STRIDER_VS_NUPACK.md`.
 
 For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools —
 neither NUPACK nor ViennaRNA models Mg²⁺.
