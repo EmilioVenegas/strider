@@ -632,7 +632,7 @@ for db, e, _ in subopt_structures('GCGCAAAAGCGC', gap=3.0, max_structures=20):
 # -1.010  .(((....))).
 ```
 
-**Multi-strand / dimers.** Pass `'&'`-joined strands (or several strands via the engine) to enumerate dimer / complex structures; dot-brackets carry the strand separator and `pair_list` is indexed over the concatenated sequence (matching `mfe`):
+**Multi-strand / dimers.** Pass `'&'`-joined strands to `subopt_structures` to enumerate dimer / complex structures for that one strand concatenation; dot-brackets carry the strand separator and `pair_list` is indexed over the concatenated sequence (matching `mfe`):
 
 ```python
 for db, e, _ in subopt_structures('GCGCAATTGCGC&GCGCAATTGCGC', gap=3.0):
@@ -641,6 +641,8 @@ for db, e, _ in subopt_structures('GCGCAATTGCGC&GCGCAATTGCGC', gap=3.0):
 # -16.84  .(((((((((((&))))))))))).
 # ...
 ```
+
+Via the engine, `engine.subopt(*strands)` is **order-invariant** (like `engine.mfe`, see §7): it gathers suboptimals across strand arrangements, measures the gap from the global MFE, deduplicates, and reports them in the MFE-winning strand order (pseudoknot brackets `[]`/`{}` mark pairs that cross in that order) — so `engine.subopt(*strands)[0]` matches the order-invariant MFE regardless of how the strands are listed.
 
 Salt (`sodium_M` / `magnesium_M`) is applied per closed base pair, so both routines track [Na⁺]/[Mg²⁺]; at the 1 M Na⁺ / 0 Mg²⁺ reference the correction is exactly zero.
 
@@ -810,6 +812,22 @@ SetSpec(max_size=0, include=[                          # only explicit complexes
 ```
 
 `Complex` is canonicalized by sorted strand names, so `Complex(strands=(H1, H2))` and `Complex(strands=(H2, H1))` are the same chemical species. The cyclic-rotation symmetry number σ (Dirks et al. 2007 eq. 11) is exposed at `cx.sigma` and applied automatically inside the engine's pfunc.
+
+#### Order-invariant complex folding
+
+A linear folding DP can only represent structures that are non-crossing for *one* strand concatenation, so a complex's predicted MFE would otherwise change if you merely relabel the strand order (Dirks et al. 2007). `engine.mfe(*strands)` removes this artifact: it searches strand arrangements and returns the global minimum over a structure that connects all strands — exactly for small complexes (every distinct cut is folded, within a length-scaled budget; dimers, trimers, small 4-strand), and via a sequence-affinity + crossing-minimisation heuristic for larger fused networks. The result is the same regardless of how the strands are listed:
+
+```python
+eng = ThermoEngine(backend="native")
+def rc(s): return s.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+A, B, C = "GGAATTCCGTAC", "ACGTGGCATTAC", "TGCATGCAAGCT"
+ring = [rc(A) + B, rc(B) + C, rc(C) + A]          # closed 3-strand triangle
+import itertools
+print({round(eng.mfe(*p).energy, 3) for p in itertools.permutations(ring)})
+# {-39.542}  ← identical from all 6 orderings
+```
+
+The winning permutation is reported as `MFEResult.strand_order` (new slot → input strand index); `structure`/`base_pairs`/`sequence` are expressed in that order, since a structure nested in the winning order may be pseudoknotted in the caller's. `engine.subopt` (§4) is order-invariant the same way.
 
 #### Low-level solver
 
