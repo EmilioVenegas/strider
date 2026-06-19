@@ -440,6 +440,99 @@ class ThermoEngine:
             return R * (celsius + 273.15) * math.log(sigma)
         return 0.0
 
+    def _assoc_correction(self, n_strands: int, connected: bool = True) -> float:
+        """Bimolecular association penalty ``(L−1)·ΔG_assoc`` for a connected complex.
+
+        Each strand beyond the first costs one association (loss of translational
+        / rotational entropy on binding); Dirks et al. (2007) charge this once per
+        association, so a connected ``L``-strand complex pays ``(L−1)·ΔG_assoc``.
+        NUPACK includes the identical term in its complex free energy (verified:
+        zeroing ``join_penalty`` in ``dna04`` shifts the complex ΔG by exactly
+        ``(L−1)·1.96``), so applying it here is required for thermodynamic parity
+        and for physically meaningful concentrations.
+
+        Sourced from ``parameters_{dna,rna}.JOIN_PENALTY`` (DNA 1.96, RNA 4.09 at
+        37 °C).  Returns 0 for a single strand or a disconnected MFE structure
+        (which describes a lower-order species, not an ``L``-strand complex).
+        """
+        if n_strands < 2 or not connected:
+            return 0.0
+        if self.material == "dna":
+            from strider.thermo.parameters_dna import JOIN_PENALTY
+        else:
+            from strider.thermo.parameters_rna import JOIN_PENALTY
+        return (n_strands - 1) * float(JOIN_PENALTY)
+
+    def _coaxial_correction(
+        self, pairs: list[tuple[int, int]], strand_lens: list[int], seq: str
+    ) -> float:
+        """Coaxial-stacking stabilisation at flush strand nicks (kcal/mol, ≤ 0).
+
+        When two helices abut across a strand nick with no intervening unpaired
+        bases (a *coaxial junction*), their terminal base pairs stack as if the
+        backbone were continuous — a strong stabilisation (~−1 to −2 kcal/mol per
+        junction) that NUPACK includes but strider's nick-aware DP omits, treating
+        the cross-nick terminus as a bare helix end instead.  This is the dominant,
+        junction-count-scaling part of the strider–NUPACK multi-strand gap (a
+        contiguous duplex and a nicked duplex differ by ~2.5 kcal/mol; the gap
+        grows with strand count).
+
+        Computed from the folded structure (leading-order: the dominant structure
+        carries the coaxial stacks), so it composes with the engine's σ and
+        association corrections without touching the DP or the pair-probability
+        recurrence.  Returns the summed coaxial stack ΔG over flush nicks where the
+        bases on both sides are paired and the two closing pairs are mutually
+        coaxial (their partners adjacent), keyed through ``COAXIAL_STACK`` (falling
+        back to the nearest-neighbour ``STACK`` value).
+        """
+        if len(strand_lens) < 2 or not pairs:
+            return 0.0
+        from strider.thermo._param_context import lookup_table
+        if self.material == "dna":
+            from strider.thermo.parameters_dna import COAXIAL_STACK, STACK
+        else:
+            from strider.thermo.parameters_rna import STACK
+            COAXIAL_STACK = {}
+        COAXIAL_STACK = lookup_table("coaxial_stack", COAXIAL_STACK) if COAXIAL_STACK else {}
+        STACK = lookup_table("stack", STACK)
+
+        n = len(seq)
+        partner = [-1] * n
+        for i, j in pairs:
+            partner[i] = j
+            partner[j] = i
+        # Nick positions: index of the first base of each strand after the first.
+        nicks = []
+        pos = 0
+        for length in strand_lens[:-1]:
+            pos += length
+            nicks.append(pos)
+
+        total = 0.0
+        for nk in nicks:
+            a, b = nk - 1, nk           # bases flanking the nick (left 3', right 5')
+            pa, pb = partner[a], partner[b]
+            if pa < 0 or pb < 0:
+                continue                # a dangle/loop, not a coaxial junction
+            if pa == b:
+                continue                # a and b pair each other: one continuous
+                                        # helix through the nick, not a junction
+            # Flush coaxial stack: two *distinct* closing pairs (a,pa) and (b,pb)
+            # align so their partners are adjacent across the helix axis
+            # (|pa − pb| == 1), in either stacking orientation.
+            if pa == pb + 1:
+                key = seq[a] + seq[b] + seq[pb] + seq[pa]
+            elif pb == pa + 1:
+                key = seq[pa] + seq[pb] + seq[b] + seq[a]
+            else:
+                continue
+            dg = COAXIAL_STACK.get(key)
+            if dg is None:
+                dg = STACK.get(key, 0.0)
+            if dg < 0:
+                total += dg
+        return total
+
     def _pfunc_dispatch(self, sequences: tuple[str, ...]) -> PFuncResult:
         """Route partition function calculation to the active backend."""
         if self._backend == "vienna":
@@ -478,6 +571,7 @@ class ThermoEngine:
                 structure, energy, pairs, order = (
                     cf.structure, cf.energy, cf.pairs, cf.order,
                 )
+                connected = cf.connected
             else:
                 # Too many strands for an order search; fold the given order.
                 order = tuple(range(len(sequences)))
@@ -485,8 +579,14 @@ class ThermoEngine:
                     "&".join(sequences), self.celsius, self.material,
                     self.sodium, self.magnesium,
                 )
+                from strider.structure.complex_fold import is_connected
+                connected = is_connected(pairs, [len(s) for s in sequences])
         seq = "&".join(sequences[i] for i in order)
         energy += self._mfe_sigma_correction(sequences, self.celsius)
+        if len(sequences) > 1:
+            energy += self._assoc_correction(len(sequences), connected)
+            ordered_lens = [len(sequences[i]) for i in order]
+            energy += self._coaxial_correction(pairs, ordered_lens, seq.replace("&", ""))
         return MFEResult(
             energy=energy, structure=structure, base_pairs=pairs,
             sequence=seq, strand_order=tuple(order),
@@ -552,6 +652,21 @@ class ThermoEngine:
             sigma = cyclic_symmetry(list(sequences))
             if sigma > 1:
                 dG += R * (self.celsius + 273.15) * math.log(sigma)
+            # Bimolecular association penalty (L−1)·ΔG_assoc — the same term
+            # NUPACK includes in its complex free energy (see _assoc_correction).
+            dG += self._assoc_correction(len(sequences))
+            # Coaxial stacking at flush strand nicks (leading-order, from the
+            # dominant structure) — recovers the junction-scaling part of the
+            # NUPACK gap that the nick-aware DP omits (see _coaxial_correction).
+            from strider.structure.complex_fold import fold_complex, DEFAULT_MAX_STRANDS
+            if len(sequences) <= DEFAULT_MAX_STRANDS:
+                cf = fold_complex(
+                    list(sequences), self.celsius, self.material,
+                    self.sodium, self.magnesium,
+                )
+                ordered_lens = [len(sequences[i]) for i in cf.order]
+                ordered_seq = "".join(sequences[i] for i in cf.order)
+                dG += self._coaxial_correction(cf.pairs, ordered_lens, ordered_seq)
 
         Z = math.exp(-dG / (R * (self.celsius + 273.15)))
         return PFuncResult(free_energy=dG, partition_function=Z, pair_probs=probs)

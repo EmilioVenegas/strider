@@ -58,23 +58,32 @@ class TestEngineOrderInvariance:
             rng.shuffle(p)
             assert eng.mfe(*p).energy == pytest.approx(ref, abs=1e-9)
 
-    def test_homotrimer_includes_sigma(self, eng):
-        """A homotrimer is trivially order-invariant and carries the σ=3 term."""
+    def test_homotrimer_includes_sigma_and_assoc(self, eng):
+        """A homotrimer is order-invariant and carries the σ=3 term plus the
+        (L−1)·ΔG_assoc association penalty (and any coaxial-junction term)."""
+        from strider.thermo.parameters_dna import JOIN_PENALTY
         s = RING3[0]
         assert cyclic_symmetry([s, s, s]) == 3
         from strider.structure.complex_fold import fold_complex as _fc
-        raw = _fc([s, s, s], 37.0, "dna", eng.sodium, eng.magnesium).energy
-        expected = raw + R * (37.0 + 273.15) * math.log(3)
+        cf = _fc([s, s, s], 37.0, "dna", eng.sodium, eng.magnesium)
+        coax = eng._coaxial_correction(
+            cf.pairs, [len(s)] * 3, "".join(s for _ in range(3)),
+        )
+        expected = (cf.energy + R * (37.0 + 273.15) * math.log(3)
+                    + 2 * JOIN_PENALTY + coax)
         assert eng.mfe(s, s, s).energy == pytest.approx(expected, abs=1e-9)
 
     def test_no_worse_than_any_single_order(self, eng):
-        """The order-invariant MFE is no worse than any single concatenation."""
+        """The order-invariant MFE is no worse than any single concatenation
+        (accounting for the σ and association corrections the engine adds)."""
         from strider.structure.mfe import fold_mfe
+        from strider.thermo.parameters_dna import JOIN_PENALTY
         sigma_shift = R * (37.0 + 273.15) * math.log(cyclic_symmetry(RING3))
+        assoc = (len(RING3) - 1) * JOIN_PENALTY  # coaxial term is ≤ 0
         invariant = eng.mfe(*RING3).energy
         for p in itertools.permutations(RING3):
             single = fold_mfe("&".join(p), 37.0, "dna", eng.sodium, eng.magnesium)[1]
-            assert invariant <= single + sigma_shift + 1e-9
+            assert invariant <= single + sigma_shift + assoc + 1e-9
 
 
 class TestSuboptOrderInvariance:
@@ -82,11 +91,13 @@ class TestSuboptOrderInvariance:
     def eng(self):
         return ThermoEngine(backend="native", celsius=37.0)
 
-    def test_subopt_top_equals_mfe(self, eng):
-        """subopt[0] must equal mfe for a multi-strand complex (was order-broken)."""
-        mfe = eng.mfe(*RING3).energy
+    def test_subopt_top_is_order_invariant_structural_mfe(self, eng):
+        """subopt[0] is the order-invariant *structural* MFE (no σ/assoc/coaxial),
+        i.e. the raw fold_complex energy — was order-broken before the search."""
+        from strider.structure.complex_fold import fold_complex
+        raw = fold_complex(RING3, 37.0, "dna", eng.sodium, eng.magnesium).energy
         top = eng.subopt(*RING3, gap=1.5)[0][1]
-        assert top == pytest.approx(mfe, abs=1e-6)
+        assert top == pytest.approx(raw, abs=1e-6)
 
     def test_subopt_energy_set_invariant(self, eng):
         ref = None

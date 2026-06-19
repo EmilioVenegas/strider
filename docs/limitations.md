@@ -40,9 +40,16 @@ judge fit. These fall into two groups.
   order) that is order-invariant in practice but not guaranteed to find the global optimum for large
   fused networks (e.g. a 6-strand dendrimer). The partition function (`engine.pfunc`) is **not yet
   order-invariant** — it still folds the supplied order.
-- **No bimolecular association penalty (ΔG_assoc).** strider does not apply the per-association
-  (`(L−1)·ΔG_assoc`) term that NUPACK includes in complex free energies, so multi-strand ΔG is on a
-  different additive reference than NUPACK's (it omits the association/nucleation cost). See
+- **Multi-strand ensemble breadth (the residual NUPACK gap).** strider applies the per-association
+  `(L−1)·ΔG_assoc` term (DNA 1.96 / RNA 4.09), the same one NUPACK includes in its complex free
+  energy (verified: zeroing NUPACK's `join_penalty` shifts its complex ΔG by exactly `(L−1)·1.96`),
+  plus a coaxial-stacking correction at flush strand nicks. The residual gap vs NUPACK is the
+  **multi-strand ensemble breadth**: NUPACK's dangle/coaxial-stacking ensemble stabilises partial /
+  frayed multi-strand microstates more than strider's model, broadening its partition function (e.g.
+  a 10-bp dimer: NUPACK −2.8 kcal/mol of ensemble broadening vs strider −0.2). Single-strand folding
+  matches NUPACK to ≈0.05 kcal/mol; the deficit appears only for multi-strand complexes and grows with
+  strand/junction count. The coaxial-junction part is recovered (a coaxial junction contributes
+  ≈ −2 kcal/mol that strider previously omitted); the broadening part remains. See
   `STRIDER_VS_NUPACK.md`.
 
 For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools —
