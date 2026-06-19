@@ -143,31 +143,33 @@ class TestSymmetryInEngine:
     the solver, so every backend produces a comparable species-level ΔG.
     """
 
-    def test_native_homodimer_pfunc_includes_sigma(self):
+    def test_native_homodimer_pfunc_includes_sigma_and_assoc(self):
         from strider.thermo.engine import ThermoEngine
         from strider.thermo.ensemble import multistrand_pairs
+        from strider.thermo.parameters_dna import JOIN_PENALTY
         eng = ThermoEngine(material="dna", celsius=37.0,
                            sodium=0.137, magnesium=0.01, backend="native")
-        # σ-corrected ΔG (engine.pfunc) should be HIGHER than the raw DP value
-        # by RT·ln(2) ≈ 0.43 kcal/mol for a homodimer.  Pass the engine's salt
-        # to the raw DP so both sides see the same per-bp salt correction.
+        # engine.pfunc = raw DP + σ correction (RT·ln 2 for a homodimer)
+        # + the (L−1)·ΔG_assoc bimolecular association penalty.  Pass the
+        # engine's salt to the raw DP so both sides see the same per-bp salt.
         seq = "GCGCGCAAAA"
         raw, _ = multistrand_pairs([seq, seq], 37.0, "dna", 0.137, 0.01)
         corrected = eng.pfunc(seq, seq).free_energy
         import math
-        expected_delta = 1.987e-3 * 310.15 * math.log(2)
+        expected_delta = 1.987e-3 * 310.15 * math.log(2) + JOIN_PENALTY
         assert abs((corrected - raw) - expected_delta) < 1e-6
 
-    def test_heterodimer_no_correction(self):
+    def test_heterodimer_includes_assoc_only(self):
         from strider.thermo.engine import ThermoEngine
         from strider.thermo.ensemble import multistrand_pairs
+        from strider.thermo.parameters_dna import JOIN_PENALTY
         eng = ThermoEngine(material="dna", celsius=37.0,
                            sodium=0.137, magnesium=0.01, backend="native")
         a, b = "GCGCGCAAAA", "TTTTGCGCGC"
         raw, _ = multistrand_pairs([a, b], 37.0, "dna", 0.137, 0.01)
         corrected = eng.pfunc(a, b).free_energy
-        # σ = 1 → no shift
-        assert abs(corrected - raw) < 1e-6
+        # σ = 1 (no symmetry shift); only the association penalty applies.
+        assert abs((corrected - raw) - JOIN_PENALTY) < 1e-6
 
 
 class TestEquilibriumFromEngine:

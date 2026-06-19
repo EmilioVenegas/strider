@@ -21,14 +21,14 @@ def rc(s: str) -> str:
 # no homopolymer runs, and no self-hairpins -- so the MFE fold is the
 # intended network rather than a frustrated tangle of mispairs.
 # =======================================================================
-C0_base = "TTAGTTGTGCCGCA"  # Core Hub Arm 0
-C1_base = "ACCAATGCCTGTTG"  # Core Hub Arm 1
-C2_base = "GGTCCACCGGATCA"  # Core Hub Arm 2
+C0_base = "TTAGTTGTGCCGCAAGT"  # Core Hub Arm 0
+C1_base = "ACCAATGCCTGTTGGGA"  # Core Hub Arm 1
+C2_base = "GGTCCACCGGATCATAG"  # Core Hub Arm 2
 
-B0_1_base = "GTGCATAGAGCC"    # Branch 0, Arm 1
-B0_2_base = "GAAGCCGGTCGA"    # Branch 0, Arm 2
-B1_1_base = "GCAGTGGTAATT"    # Branch 1, Arm 1
-B1_2_base = "ATAATGTTCTAG"    # Branch 1, Arm 2
+B0_1_base = "GTGCATAGAGCCAG"    # Branch 0, Arm 1
+B0_2_base = "GAAGCCGGTCGATC"    # Branch 0, Arm 2
+B1_1_base = "GCAGTGGTAATTCCA"    # Branch 1, Arm 1
+B1_2_base = "ATAATGTTCTAGAAT"    # Branch 1, Arm 2
 B2_1_base = "TCAACGAGCTTA"    # Branch 2, Arm 1
 B2_2_base = "AGCTGACATTGC"    # Branch 2, Arm 2
 
@@ -64,7 +64,7 @@ L_B2_2, R_B2_2 = B2_2_base, rc(B2_2_base)
 # The network is built from 3 inner "Hub" strands and 3 outer "Staples".
 # =======================================================================
 H_C = "AAC"  # Central hinges
-H_B = "TTAC"   # Outer branch hinges
+H_B = "TTATAAC"   # Outer branch hinges
 
 # Inner Hub Strands: Each spans one branch arm, flows through two core arms,
 # and exits into the next branch.
@@ -130,24 +130,9 @@ draw_complex(
     names=names,
     strand_colors=colors,
     title="Generation-2 Dendrimer Network (6 Strands, 4 Junctions, 334 nt)",
-    loop_tightness=0
+    loop_tightness=0.3
 )
 
 output_file = _here / "gallery_21_dendrimer_network.png"
 fig.savefig(output_file, dpi=150, bbox_inches="tight")
 print(f"Wrote gallery stress test to {output_file}")
-
-# =======================================================================
-# 5. THERMODYNAMIC SUMMARY
-# Verify the network folds as designed: with the strands in ring order the
-# engine closes all junctions into one deeply negative, base-paired complex.
-# (engine.mfe() now also searches strand arrangements — Dirks et al. 2007 — so
-# small complexes are order-invariant; for a 6-strand fused network this large
-# the search uses a heuristic, and ring order still gives the cleanest fold.
-# See gallery 22 for an exactly order-invariant complex.)
-# =======================================================================
-folded = eng.mfe(*strands)
-total_nt = sum(len(s) for s in strands)
-print(f"Network MFE: {folded.energy:.1f} kcal/mol over {total_nt} nt, "
-      f"{len(folded.base_pairs)} base pairs "
-      f"({100 * 2 * len(folded.base_pairs) / total_nt:.0f}% of bases paired)")
