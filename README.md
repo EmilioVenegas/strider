@@ -1730,7 +1730,17 @@ The captured mean is capped at the molecule budget (`μ = N_total·(1 − exp(�
 
 ### 21. Visualization
 
-The `strider.viz` subsystem renders publication-quality figures from strider data structures — secondary structures, multi-strand complexes, reaction cascades, accessibility tracks, arc diagrams, mountain plots, and energy landscapes — using only matplotlib. All viz functions are **lazily imported** from the top-level `strider` namespace, so `import strider` never pulls in matplotlib unless you actually call a drawing function.
+The `strider.viz` subsystem renders publication-quality figures from strider data structures — secondary structures, multi-strand complexes, reaction cascades, accessibility tracks, arc diagrams, mountain plots, and energy landscapes — using only matplotlib. Layout is native (no ViennaRNA): a space-aware radial tree with crossing-aware strand ordering, so even large multi-way junctions and whole reaction cascades lay out cleanly. All viz functions are **lazily imported** from the top-level `strider` namespace, so `import strider` never pulls in matplotlib unless you actually call a drawing function.
+
+<p align="center">
+  <img src="examples/gallery_15_multiloop.png" alt="Multiloop stem-loop" height="240">
+  <img src="examples/gallery_20_complex_fiveway.png" alt="150-nt five-strand five-way junction" height="240">
+  <img src="examples/gallery_22_four_arm_junction.png" alt="Four-arm junction complex" height="240">
+</p>
+<p align="center">
+  <img src="examples/complex_and_cascade.png" alt="Multi-strand complex and CHA reaction cascade" width="92%">
+</p>
+<p align="center"><sub>Native radial layout: a multiloop, a 150-nt five-way junction, and a four-arm junction (top); an H1·H2·CP complex with its CHA reaction cascade (bottom). Rendered by <code>examples/15</code>, <code>20</code>, <code>22</code>, and <code>13</code>.</sub></p>
 
 #### 2D secondary structure
 
@@ -1754,6 +1764,11 @@ ax = draw_structure('TCAACATCAGTCTGATAAGG', engine=engine, color='accessibility'
 
 Coloring modes: `"structure"` (stem/loop/bulge elements), `"nt"` (nucleotide identity), `"strand"` (per-strand), `"accessibility"` (unpaired probability heatmap). `"auto"` picks `"strand"` for multi-strand sequences, `"structure"` for single strands.
 
+<p align="center">
+  <img src="examples/gallery_14_hairpin.png" alt="Hairpin stem-loop" height="230">
+  <img src="examples/gallery_18_bulge.png" alt="Interior loop and bulge" height="230">
+</p>
+
 #### Multi-strand complexes
 
 `draw_complex` is the multi-strand convenience wrapper. Pass a list of sequences (or a `Complex` from the tube API) and it folds and draws them with per-strand coloring:
@@ -1766,6 +1781,11 @@ ax = draw_complex([H1, H2], engine=engine, names=['H1', 'H2'],
 ```
 
 Use `strand_colors={'H1': '#ef5350', 'H2': '#42a5f5'}` (or a list) to fix strand colors across panels.
+
+<p align="center">
+  <img src="examples/gallery_16_toehold.png" alt="Toehold-exchange duplex" height="240">
+  <img src="examples/gallery_17_captured.png" alt="Captured three-strand complex" height="240">
+</p>
 
 #### Reaction cascades
 
@@ -1780,6 +1800,10 @@ fig.savefig('cascade.png', dpi=150, bbox_inches='tight')
 ```
 
 Each species with resolvable sequences is drawn as a folded 2-D structure; abstract species get a labeled box. Strand colors are stable across panels (same strand = same color everywhere).
+
+<p align="center">
+  <img src="examples/cha_cascade.png" alt="CHA reaction cascade with ΔΔG and rate annotations" width="92%">
+</p>
 
 #### Accessibility track
 
@@ -2192,6 +2216,7 @@ python examples/18_gallery_bulge.py
 python examples/19_gallery_fourway.py
 python examples/20_gallery_fiveway.py
 python examples/21_gallery_dendrimer.py
+python examples/22_gallery_four_arm_junction.py
 ```
 
 ### `01_dna_thermodynamics.py` — NN model fundamentals
@@ -2236,7 +2261,7 @@ Builds two `Tube` objects at different total concentrations (100 nM and 10 μM),
 
 ### `09_dynamical_design.py` — Closed-loop dynamical design
 
-Drives sequence optimization from a *kinetic* cost rather than a static equilibrium defect. Demonstrates the canonical use case from `outperform_nupack.md` item 1: **match a target step-response curve**. A single `A + B <-> AB` hybridization step, with strand A being just the 7-nt designed toehold (no flanking tail), so ΔΔG against the fixed B partner spans ≈ −1 to −8 kcal/mol across all 7-mers — a ≳10⁴× spread in Keq. The example wraps the bridge as a `network_factory: (seqs) → mantis.CRNetwork` closure, uses `DesignObjective.kinetic_trajectory` to score the normalized MSE between the simulated [AB](t) and the target `A₀·(1 − exp(−t/τ))` curve, and lets `SequenceDesigner` find a toehold that matches. Each SA step rebuilds the CRN with the new sequence and reruns the mantis ODE — the feedback loop is honest. The output plot shows three curves (target, baseline `ATATATA` plateauing near 0 nM, optimized reaching ~50% of saturation) alongside a per-trial SA convergence bar chart.
+Drives sequence optimization from a *kinetic* cost rather than a static equilibrium defect. Demonstrates the canonical use case from `outperform_nupack.md` item 1: **match a target step-response curve**. A single `A + B <-> AB` hybridization step, with strand A being just the 7-nt designed toehold (no flanking tail), so ΔΔG against the fixed 18-nt B partner spans ≈ −1 kcal/mol (no complementary register) to ≈ −5.8 kcal/mol (the strongest 7-nt window of B, reverse-complemented). Because B is long, *partial* complements still bind in their best register, so the landscape is graded — the optimizer has a gradient to climb. Two physics points drive the setup: **kf is sequence-independent** (Zhang–Winfree kf depends on toehold *length*, not sequence — only kr, hence the plateau, varies with ΔΔG), so the design lever is the **plateau height**, not the rise time; and a 7-mer plateau is **sub-saturating**, so the target is pinned to a fraction of the *measured* achievable maximum (the perfect complement's own plateau) rather than to full saturation, which would be unreachable. The example wraps the bridge as a `network_factory: (seqs) → mantis.CRNetwork` closure, uses `DesignObjective.kinetic_trajectory` to score the normalized MSE between the simulated [AB](t) and the target `A₀·(1 − exp(−t/τ))` curve, and lets `SequenceDesigner` find a toehold that matches. Each SA step rebuilds the CRN with the new sequence and reruns the mantis ODE — the feedback loop is honest. Targeting 50% of the achievable maximum makes it a genuine two-sided design (too-strong toeholds are penalized too): the optimizer drops the cost from ≈ 0.93 to ≈ 0.02. The output plot shows four curves (target, the strongest-possible 7-mer as the achievable ceiling, baseline `ATATATA` plateauing near 0 nM, and the optimized toehold landing on the target) alongside a per-trial SA convergence bar chart. Requires the optional `mantis-delta` dependency (`pip install strider-dna[mantis]`).
 
 ### `10_domain_enumeration.py` — Template-free reaction enumeration
 
@@ -2254,9 +2279,27 @@ Contrasts the deterministic surface LOD with the §20 stochastic one. The determ
 
 Demonstrates `draw_complex` for a multi-strand H1·H2·CP complex and `draw_cascade` for the full CHA reaction pathway. Shows how strand colors are kept consistent across panels (same sequence = same color in every reactant/product structure).
 
-### `14–21` Gallery scripts — Visualization motifs
+### `14–22` Gallery scripts — Visualization motifs
 
-A set of gallery scripts, each showcasing `draw_structure` or `draw_complex` on a different structural motif: hairpin (`14`), multiloop (`15`), toehold exchange (`16`), captured state (`17`), bulge loop (`18`), fourway junction (`19`), fiveway junction (`20`), and dendrimer network (`21`). Each generates a publication-quality PNG.
+A set of gallery scripts, each showcasing `draw_structure`, `draw_complex`, or `draw_cascade` on a different structural motif. Each generates a publication-quality PNG using the native radial layout.
+
+<table>
+<tr>
+  <td align="center"><img src="examples/gallery_14_hairpin.png" alt="hairpin" height="150"><br><sub><code>14</code> hairpin</sub></td>
+  <td align="center"><img src="examples/gallery_15_multiloop.png" alt="multiloop" height="150"><br><sub><code>15</code> multiloop</sub></td>
+  <td align="center"><img src="examples/gallery_16_toehold.png" alt="toehold exchange" height="150"><br><sub><code>16</code> toehold exchange</sub></td>
+</tr>
+<tr>
+  <td align="center"><img src="examples/gallery_17_captured.png" alt="captured complex" height="150"><br><sub><code>17</code> captured state</sub></td>
+  <td align="center"><img src="examples/gallery_18_bulge.png" alt="bulge loop" height="150"><br><sub><code>18</code> bulge loop</sub></td>
+  <td align="center"><img src="examples/gallery_19_fourway.png" alt="four-way junction" height="150"><br><sub><code>19</code> four-way junction</sub></td>
+</tr>
+<tr>
+  <td align="center"><img src="examples/gallery_20_complex_fiveway.png" alt="five-way junction" height="150"><br><sub><code>20</code> five-way junction</sub></td>
+  <td align="center"><img src="examples/gallery_21_dendrimer_network.png" alt="dendrimer network" height="150"><br><sub><code>21</code> dendrimer network</sub></td>
+  <td align="center"><img src="examples/gallery_22_four_arm_junction.png" alt="four-arm junction" height="150"><br><sub><code>22</code> four-arm junction</sub></td>
+</tr>
+</table>
 
 ---
 
