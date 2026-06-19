@@ -79,6 +79,9 @@ def draw_structure(
     labels: bool = True,
     nick_markers: bool = False,
     relax_iters: int = 0,
+    repel_range: float = 0.85,
+    method: str = "auto",
+    loop_tightness: float = 1.5,
     title: str | None = None,
 ):
     """
@@ -99,6 +102,9 @@ def draw_structure(
                     ``strand_names``) or a list aligned to strand order. Keeps a
                     given strand the *same* color across panels.
     relax_iters   : passed through to the layout (0 disables relaxation)
+    loop_tightness : margin on each arm's angular wedge in the ``tree`` layout
+                    (default 1.5); lower to shrink multiloop radii / shorten
+                    junction linkers (too low → arms collide). No effect on radial.
 
     Returns
     -------
@@ -113,7 +119,9 @@ def draw_structure(
         structure = result.structure
     if layout is None:
         layout = layout_structure(
-            sequence, structure, pairs=pairs, nicks=nicks, relax_iters=relax_iters
+            sequence, structure, pairs=pairs, nicks=nicks,
+            relax_iters=relax_iters, repel_range=repel_range, method=method,
+            loop_tightness=loop_tightness,
         )
 
     if color == "auto":
@@ -432,6 +440,11 @@ def draw_complex(
     ax: "Axes | None" = None,
     names: list[str] | None = None,
     color: str = "strand",
+    reorder: bool = True,
+    relax_iters: int = 0,
+    repel_range: float = 0.85,
+    method: str = "auto",
+    loop_tightness: float = 1.5,
     **kw,
 ):
     """
@@ -440,7 +453,23 @@ def draw_complex(
     ``complex_or_seqs`` may be a :class:`strider.tube.Complex` (uses ``.sequences``
     / ``.strand_names``), a list of sequence strings, or a ``&``-joined string.
     The complex is folded via ``engine.mfe(*seqs)`` when ``structure`` is None.
+
+    Multi-strand pseudoknot-freeness is *order-dependent*, so by default
+    (``reorder=True``) the strands are reordered to a concatenation order that
+    minimises base-pair crossings before layout — a closed network (e.g. a
+    dendrimer) that is heavily pseudoknotted in the input order then draws flat.
+    Strand colours and names follow their strand through the reorder, so a given
+    strand keeps its identity.  De-overlap of multi-junction networks is handled
+    by the layout itself (``method="auto"`` falls back to the space-aware tree
+    layout only when the compact radial one would overlap), so the spring
+    relaxation is off by default; ``relax_iters``/``repel_range`` enable it for
+    ``method="radial"`` if wanted.  ``loop_tightness`` (default 1.5) shrinks the
+    tree layout's multiloop radii — lower it (e.g. 0.8) to pull crowded junction
+    linkers in; too low and the arms start to collide.
     """
+    from strider.structure.dot_bracket import parse_pairs
+    from strider.viz import geometry as _geom
+
     # resolve sequences + names
     if hasattr(complex_or_seqs, "sequences"):
         seqs = list(complex_or_seqs.sequences)
@@ -450,11 +479,40 @@ def draw_complex(
     else:
         seqs = list(complex_or_seqs)
 
-    joined = "&".join(seqs)
     if structure is None and engine is not None:
-        structure = engine.mfe(*seqs).structure
+        result = engine.mfe(*seqs)
+        structure = result.structure
+        # engine.mfe folds a multi-strand complex order-invariantly and returns
+        # the structure in the winning strand order; adopt that order here so the
+        # pairs, names and colours stay aligned to the sequence being drawn.
+        order = list(result.strand_order)
+        if order and order != list(range(len(seqs))):
+            seqs = [seqs[i] for i in order]
+            if names and len(names) == len(order):
+                names = [names[i] for i in order]
+            sc = kw.get("strand_colors")
+            if isinstance(sc, list) and len(sc) == len(order):
+                kw["strand_colors"] = [sc[i] for i in order]
 
+    # work over an explicit pair list so a reorder only has to remap indices
+    # (no dot-bracket round-trip, no second fold)
+    pairs = parse_pairs(structure) if structure else None
+
+    if reorder and pairs and len(seqs) > 2:
+        strand_lens = [len(s) for s in seqs]
+        order = _geom.best_strand_order(pairs, strand_lens)
+        if order != list(range(len(seqs))):
+            seqs = [seqs[i] for i in order]
+            if names and len(names) == len(order):
+                names = [names[i] for i in order]
+            sc = kw.get("strand_colors")
+            if isinstance(sc, list) and len(sc) == len(order):
+                kw["strand_colors"] = [sc[i] for i in order]
+            pairs = _geom.remap_pairs(pairs, strand_lens, order)
+
+    joined = "&".join(seqs)
     return draw_structure(
-        joined, structure, engine=engine, ax=ax, color=color,
-        strand_names=names, **kw,
+        joined, pairs=pairs, engine=engine, ax=ax, color=color,
+        strand_names=names, relax_iters=relax_iters, repel_range=repel_range,
+        method=method, loop_tightness=loop_tightness, **kw,
     )

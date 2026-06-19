@@ -36,6 +36,11 @@ class MFEResult:
     structure: str          # dot-bracket
     base_pairs: list[tuple[int, int]] = field(default_factory=list)
     sequence: str = ""
+    # For a multi-strand complex the MFE is found by an order-invariant search
+    # over strand arrangements; ``structure``/``base_pairs``/``sequence`` are in
+    # the winning order.  ``strand_order`` maps new slot k → the index of the
+    # input strand placed there (identity when unchanged / single strand).
+    strand_order: tuple[int, ...] = ()
 
 
 @dataclass
@@ -204,16 +209,32 @@ class ThermoEngine:
         — e.g. ``subopt("AAAA", "TTTT")`` or ``subopt("AAAA&TTTT")``.  Each
         returned dot-bracket carries strand separators; ``pair_list`` is indexed
         over the concatenated sequence, consistent with :meth:`mfe`.
+
+        For a multi-strand complex the enumeration is *order-invariant* (like
+        :meth:`mfe`): suboptimals are gathered across strand arrangements,
+        deduplicated, measured from the global MFE, and reported in the MFE-
+        winning strand order (pseudoknot brackets ``[]``/``{}`` mark pairs that
+        cross in that order).  Energies are structural, so ``subopt(*strands)[0]``
+        equals the raw (σ-free) order-invariant MFE regardless of strand order —
+        i.e. ``mfe(*strands)`` minus its rotational-symmetry term.
         """
         if not sequences:
             raise ValueError("subopt requires at least one sequence")
-        seq = "&".join(sequences)
-        from strider.structure.sampling import subopt_structures
-        return subopt_structures(
-            seq, gap=gap, celsius=self.celsius, material=self.material,
-            max_structures=max_structures,
-            sodium_M=self.sodium, magnesium_M=self.magnesium,
-        )
+        strands = "&".join(sequences).replace("+", "&").split("&")
+        from strider.structure.sampling import subopt_complex, subopt_structures
+        from strider.thermo._param_context import param_context
+        with param_context(self._param_override()):
+            if len(strands) <= 1:
+                return subopt_structures(
+                    strands[0], gap=gap, celsius=self.celsius, material=self.material,
+                    max_structures=max_structures,
+                    sodium_M=self.sodium, magnesium_M=self.magnesium,
+                )
+            return subopt_complex(
+                strands, gap=gap, celsius=self.celsius, material=self.material,
+                max_structures=max_structures,
+                sodium_M=self.sodium, magnesium_M=self.magnesium,
+            )
 
     def pairs(self, *sequences: str) -> np.ndarray:
         """Pair-probability matrix P[i,j] for the given (multi-)strand complex."""
@@ -428,16 +449,48 @@ class ThermoEngine:
     # ─── native backend ───────────────────────────────────────────────────────
 
     def _mfe_native(self, sequences: tuple[str, ...]) -> MFEResult:
-        """MFE via the built-in Zuker-style DP (strider.structure.mfe)."""
+        """MFE via the built-in Zuker-style DP (strider.structure.mfe).
+
+        For a multi-strand complex the result is folded *order-invariantly*: the
+        linear kernel only represents structures non-crossing for one strand
+        concatenation, so the predicted MFE would otherwise change under a mere
+        relabelling of strand order (Dirks et al. 2007).  ``fold_complex`` folds
+        the distinct arrangements and returns the global minimum over a structure
+        that connects all strands; the reported ``sequence``/``structure`` are in
+        the winning order (a structure nested in that order may be pseudoknotted
+        in the caller's, so it cannot be rendered in the caller's order).
+        """
         from strider.structure.mfe import fold_mfe
+        from strider.structure.complex_fold import fold_complex, DEFAULT_MAX_STRANDS
         from strider.thermo._param_context import param_context
-        seq = "&".join(sequences)
         with param_context(self._param_override()):
-            structure, energy, pairs = fold_mfe(
-                seq, self.celsius, self.material, self.sodium, self.magnesium,
-            )
+            if len(sequences) <= 1:
+                seq = sequences[0] if sequences else ""
+                structure, energy, pairs = fold_mfe(
+                    seq, self.celsius, self.material, self.sodium, self.magnesium,
+                )
+                order = tuple(range(len(sequences)))
+            elif len(sequences) <= DEFAULT_MAX_STRANDS:
+                cf = fold_complex(
+                    list(sequences), self.celsius, self.material,
+                    self.sodium, self.magnesium,
+                )
+                structure, energy, pairs, order = (
+                    cf.structure, cf.energy, cf.pairs, cf.order,
+                )
+            else:
+                # Too many strands for an order search; fold the given order.
+                order = tuple(range(len(sequences)))
+                structure, energy, pairs = fold_mfe(
+                    "&".join(sequences), self.celsius, self.material,
+                    self.sodium, self.magnesium,
+                )
+        seq = "&".join(sequences[i] for i in order)
         energy += self._mfe_sigma_correction(sequences, self.celsius)
-        return MFEResult(energy=energy, structure=structure, base_pairs=pairs, sequence=seq)
+        return MFEResult(
+            energy=energy, structure=structure, base_pairs=pairs,
+            sequence=seq, strand_order=tuple(order),
+        )
 
     def _pfunc_native(self, sequences: tuple[str, ...]) -> PFuncResult:
         """Partition function via the built-in McCaskill DP (single- or multi-strand)."""

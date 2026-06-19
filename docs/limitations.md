@@ -31,6 +31,19 @@ judge fit. These fall into two groups.
 - **Restricted / off-by-default pseudoknots.** The DP covers nested secondary structure and a
   restricted H-type pseudoknot class only; general pseudoknots are out of scope and disabled by
   default.
+- **Multi-strand MFE: exact order-invariance only up to small complexes.** A linear DP can only
+  represent structures non-crossing for one strand concatenation, so a complex's MFE is intrinsically
+  strand-order-dependent (Dirks et al. 2007). `engine.mfe` removes this artifact by searching strand
+  arrangements: it is **exactly order-invariant** for complexes small enough to fold every distinct
+  cut (dimers, trimers, small 4-strand — within a length-scaled fold budget). Larger complexes use a
+  sequence-affinity + crossing-minimisation **heuristic** (a few folds, never worse than the input
+  order) that is order-invariant in practice but not guaranteed to find the global optimum for large
+  fused networks (e.g. a 6-strand dendrimer). The partition function (`engine.pfunc`) is **not yet
+  order-invariant** — it still folds the supplied order.
+- **No bimolecular association penalty (ΔG_assoc).** strider does not apply the per-association
+  (`(L−1)·ΔG_assoc`) term that NUPACK includes in complex free energies, so multi-strand ΔG is on a
+  different additive reference than NUPACK's (it omits the association/nucleation cost). See
+  `STRIDER_VS_NUPACK.md`.
 
 For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools —
 neither NUPACK nor ViennaRNA models Mg²⁺.

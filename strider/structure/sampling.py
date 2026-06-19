@@ -451,3 +451,138 @@ def subopt_structures(
         plist = sorted(pset)
         out.append((_to_dot_bracket(plist, n, nicks, sep_char), e, plist))
     return out
+
+
+# ─── order-invariant multi-strand suboptimals ──────────────────────────────────
+
+def _render_pseudoknot(
+    pairs: list[tuple[int, int]], n: int, nicks: list[int], sep_char: str
+) -> str:
+    """Dot-bracket for ``pairs`` over ``[0, n)``, layering crossing pairs.
+
+    Pairs that nest are drawn with ``()``; pairs that cross the nested layer use
+    ``[]`` (and a second crossing layer ``{}``).  Needed because an order-invariant
+    suboptimal set is reported in one common (the MFE-winning) strand order, in
+    which a structure nested under a *different* order may cross.
+    """
+    from strider.structure.mfe import _insert_separators
+    from strider.viz.geometry import classify_pairs
+
+    db = ["."] * n
+    remaining = [(min(i, j), max(i, j)) for i, j in pairs]
+    for opener, closer in (("(", ")"), ("[", "]"), ("{", "}")):
+        if not remaining:
+            break
+        nested, crossing = classify_pairs(remaining)
+        for i, j in nested:
+            db[i], db[j] = opener, closer
+        remaining = crossing
+    # Any residual (≥3 crossing layers) falls back to the level-2 bracket; rare.
+    for i, j in remaining:
+        db[i], db[j] = "{", "}"
+    return _insert_separators("".join(db), nicks, sep_char)
+
+
+def _slot_offsets(lens: list[int]) -> list[int]:
+    off = [0]
+    for length in lens:
+        off.append(off[-1] + length)
+    return off
+
+
+def _pos_remapper(from_order, to_order, lens_input):
+    """Return ``pos -> pos`` mapping concat positions between two strand orders.
+
+    ``lens_input`` are strand lengths in *input* order; ``from_order``/``to_order``
+    are permutations of input strand indices.  Maps a position in the
+    ``from_order`` concatenation to the same nucleotide's position in the
+    ``to_order`` concatenation.
+    """
+    off_from = _slot_offsets([lens_input[i] for i in from_order])
+    off_to = _slot_offsets([lens_input[i] for i in to_order])
+    slot_in_to = {s: k for k, s in enumerate(to_order)}
+
+    def remap(pos: int) -> int:
+        k = 0
+        while k + 1 < len(off_from) and pos >= off_from[k + 1]:
+            k += 1
+        local = pos - off_from[k]
+        s = from_order[k]
+        return off_to[slot_in_to[s]] + local
+
+    return remap
+
+
+def subopt_complex(
+    strands: list[str],
+    gap: float = 1.0,
+    celsius: float = 37.0,
+    material: str = "dna",
+    max_structures: int = 200,
+    sodium_M: float = 1.0,
+    magnesium_M: float = 0.0,
+) -> list[tuple[str, float, list[tuple[int, int]]]]:
+    """Order-invariant suboptimal enumeration for a multi-strand complex.
+
+    The linear DP only represents structures non-crossing for one strand
+    concatenation, so a single-order ``subopt_structures`` both uses the wrong
+    (order-dependent) MFE baseline and misses structures nested only under a
+    different cut.  This enumerates suboptimals across the same strand
+    arrangements the order-invariant MFE search considers
+    (:func:`strider.structure.complex_fold.fold_complex`), measures the gap from
+    the *global* MFE, deduplicates structures across orders, and reports them in
+    one common order — the MFE-winning order — using pseudoknot brackets for any
+    structure that crosses in that order.
+
+    Energies are *structural* (per-structure loop energy), so ``subopt[0]``
+    equals the order-invariant raw MFE (``fold_mfe`` of the winning order) — the
+    rotational-symmetry term σ is a complex-level ensemble correction that lives
+    in ``engine.mfe``/``pfunc``, not in a per-structure energy.  Returns
+    ``(dot_bracket, energy, pair_list)`` like :func:`subopt_structures`, sorted
+    ascending, capped at ``max_structures``.
+    """
+    from strider.structure.complex_fold import fold_complex
+
+    lens = [len(s) for s in strands]
+    win = fold_complex(strands, celsius, material, sodium_M, magnesium_M)
+    win_order = win.order
+    global_mfe = win.energy
+    bound = global_mfe + gap
+    EPS = 1e-7
+
+    # Winning-order nicks (the common reporting frame).
+    win_nicks: list[int] = []
+    pos = 0
+    for i in win_order[:-1]:
+        pos += lens[i]
+        win_nicks.append(pos)
+    n = sum(lens)
+
+    seen: dict[frozenset, float] = {}
+    for order, e_order in win.evaluated:
+        per_order_gap = bound - e_order
+        if per_order_gap < -EPS:
+            continue
+        concat = "&".join(strands[i] for i in order)
+        remap = _pos_remapper(order, win_order, lens)
+        for _db, e, plist in subopt_structures(
+            concat, max(0.0, per_order_gap), celsius, material,
+            max_structures * 4, sodium_M, magnesium_M,
+        ):
+            if e > bound + EPS:
+                continue
+            canon = frozenset(
+                (lambda a, b: (a, b) if a < b else (b, a))(remap(i), remap(j))
+                for i, j in plist
+            )
+            cur = seen.get(canon)
+            if cur is None or e < cur:
+                seen[canon] = e
+
+    items = sorted(seen.items(), key=lambda kv: kv[1])[:max_structures]
+    out: list[tuple[str, float, list[tuple[int, int]]]] = []
+    for pset, e in items:
+        plist = sorted(pset)
+        db = _render_pseudoknot(plist, n, win_nicks, "&")
+        out.append((db, e, plist))
+    return out
