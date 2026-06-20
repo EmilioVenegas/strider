@@ -5,6 +5,113 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [1.0.0] - 2026-06-20
+
+### Documentation
+
+- **examples:** Refresh dendrimer + add four-arm junction (gallery 22)
+
+    Gallery 21: redesign the dendrimer with mutually orthogonal domains (no
+    cross-hybridisation) so the MFE fold is the intended network, and add a
+    thermodynamic summary; note engine.mfe now order-searches (heuristic for a
+    network this large, so ring order still folds cleanest).
+
+    Gallery 22: a four-arm DNA junction (4 strands, 72 nt) — small enough that the
+    order search is exhaustive, so the -38 kcal/mol fold is exactly order-invariant
+    (identical from any strand listing). Adds the plan for the order-invariant
+    multi-strand work.
+
+- **readme:** Document order-invariant multi-strand folding
+
+    Add a §7 subsection on order-invariant complex folding (engine.mfe searches
+    strand arrangements and returns the global minimum; MFEResult.strand_order gives
+    the winning permutation) with a runnable example, and note that engine.subopt is
+    order-invariant the same way.
+
+- **readme:** Document complex-FE corrections (Part C)
+
+    On top of the order-invariant folding docs, note that the multi-strand complex
+    free energy includes the (L−1)·ΔG_assoc association penalty (matching NUPACK)
+    and a coaxial-stacking correction at flush nicks, with a pointer to the residual
+    ensemble-breadth limitation. Update the order-invariance example value to
+    reflect the association penalty (−35.622).
+
+- Clarify that the NUPACK multi-strand ΔG offset is a reference-state convention rather than ensemble breadth
+- Update internal documentation references and test stats
+
+    Update references from STRIDER_VS_NUPACK.md to STRIDER_STATUS.md and
+    remove mentions of DIMER_SALT_TEMP_PLAN.md. Update the README to
+    reflect current test pass and skip counts.
+
+
+### Features
+
+- **viz:** Space-aware tree layout + crossing-aware strand ordering
+
+    Add a structure-tree-driven "tree" layout for branched and multi-strand
+    complexes that sizes each loop's angular wedge so arms radiate apart instead
+    of overlapping (overlap-free by construction; no spring relaxation needed),
+    selected automatically for branched/>=3-strand structures. Add crossing-count
+    and pair classification helpers plus best_strand_order so a complex can be
+    drawn in a low-crossing strand order. Tests for geometry and layout.
+
+- **structure:** Order-invariant multi-strand MFE and subopt
+
+    A linear DP only represents structures non-crossing for one strand
+    concatenation, so a complex's MFE changed under a mere relabelling of strand
+    order (Dirks et al. 2007) — a 3-strand complex spanned -23.9..-29.5 kcal/mol
+    across its orders, and even dimers differed between A+B and B+A.
+
+    Add strider/structure/complex_fold.py (fold_complex): search strand
+    arrangements and return the global minimum over a structure that connects all
+    strands. Exact for small complexes (every distinct cut folded, within a
+    length-scaled budget); a sequence-affinity + crossing-minimisation heuristic
+    for larger fused networks (never worse than the input order). Wire into
+    engine._mfe_native; MFEResult.strand_order exposes the winning permutation,
+    and draw_complex adopts it so pairs/names/colours stay aligned.
+
+    Make engine.subopt order-invariant for multi-strand complexes too
+    (subopt_complex): gather suboptimals across the same arrangements, measure the
+    gap from the global MFE, dedupe across orders, and report in the winning order
+    (pseudoknot brackets mark pairs that cross there). subopt[0] again equals the
+    order-invariant raw MFE. Single-strand subopt_structures is unchanged.
+
+    The rotational-symmetry term sigma is added once at the engine layer and
+    composes without double counting. pfunc remains order-dependent (the exact
+    cross-cut sum needs connectivity-aware inclusion-exclusion) — documented in
+    docs/limitations.md.
+
+- **thermo:** Apply association penalty + coaxial-nick correction (Part C)
+
+    Apply the bimolecular association penalty (L−1)·ΔG_assoc to multi-strand
+    complex free energies in both engine.mfe and engine.pfunc, single-sourced from
+    parameters_{dna,rna}.JOIN_PENALTY (DNA 1.96 / RNA 4.09), gated on connectivity
+    for MFE and composing with the σ rotational-symmetry term. This matches
+    NUPACK's complex free energy exactly — verified by zeroing dna04's join_penalty,
+    which shifts NUPACK's complex ΔG by precisely (L−1)·1.96. (The C1 audit had
+    found JOIN_PENALTY defined but applied nowhere.)
+
+    Investigation of why this *increases* the raw strider–NUPACK gap: the missing
+    penalty was masking a genuine loop-model deficit. strider's single-strand
+    folding matches NUPACK to ≈0.05 kcal/mol, but its multi-strand partition
+    function is far narrower (a 10-bp dimer: −0.2 vs NUPACK's −2.8 kcal/mol of
+    ensemble broadening) because NUPACK's dangle/coaxial-stacking ensemble
+    stabilises partial/frayed microstates and coaxial junctions that strider's
+    nick-aware DP omits; the deficit grows with strand/junction count.
+
+- Update four-arm junction gallery example with ensemble analysis and refine dynamical design example parameters
+- **thermo:** Implement component-aware association penalties for subopt
+
+    Update `subopt` to calculate free energies using component-aware
+    association penalties `(L-k)·ΔG_assoc`. This allows partially
+    dissociated structures to be correctly ranked and captured within
+    the energy gap relative to the global MFE.
+
+
+### Refactor
+
+- Update subopt tests to account for complex-level sigma symmetry corrections and component-aware association energies
+
 ## [0.9.0] - 2026-06-18
 
 ### Features
