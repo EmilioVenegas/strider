@@ -91,13 +91,13 @@ class TestSuboptOrderInvariance:
     def eng(self):
         return ThermoEngine(backend="native", celsius=37.0)
 
-    def test_subopt_top_is_order_invariant_structural_mfe(self, eng):
-        """subopt[0] is the order-invariant *structural* MFE (no σ/assoc/coaxial),
-        i.e. the raw fold_complex energy — was order-broken before the search."""
-        from strider.structure.complex_fold import fold_complex
-        raw = fold_complex(RING3, 37.0, "dna", eng.sodium, eng.magnesium).energy
+    def test_subopt_top_equals_mfe_heteromeric(self, eng):
+        """subopt[0] is mfe-consistent: for a heteromeric complex (σ = 1) the
+        top suboptimal free energy equals engine.mfe exactly (loop energy +
+        (L−1)·assoc + coaxial), order-invariantly."""
+        assert cyclic_symmetry(RING3) == 1
         top = eng.subopt(*RING3, gap=1.5)[0][1]
-        assert top == pytest.approx(raw, abs=1e-6)
+        assert top == pytest.approx(eng.mfe(*RING3).energy, abs=1e-6)
 
     def test_subopt_energy_set_invariant(self, eng):
         ref = None
@@ -114,13 +114,41 @@ class TestSuboptOrderInvariance:
         assert energies == sorted(energies)
         assert all(e <= energies[0] + gap + 1e-6 for e in energies)
 
-    def test_subopt_top_is_structural_mfe(self, eng):
-        """subopt energies are structural (σ-free): subopt[0] == raw fold_mfe of
-        the winning order == engine.mfe minus its rotational-symmetry term."""
-        from strider.structure.complex_fold import fold_complex
+    def test_subopt_top_is_mfe_minus_sigma_homomeric(self, eng):
+        """For a homomeric complex subopt[0] == engine.mfe minus the complex-level
+        σ term: σ (a −RT·ln σ ensemble correction) is not a per-structure energy,
+        so it lives in mfe/pfunc, not in the suboptimal free energies."""
         s = RING3[0]
-        raw = fold_complex([s, s], 37.0, "dna", eng.sodium, eng.magnesium).energy
-        assert eng.subopt(s, s, gap=1.0)[0][1] == pytest.approx(raw, abs=1e-6)
+        sigma = cyclic_symmetry([s, s])
+        assert sigma == 2
+        sigma_shift = R * (37.0 + 273.15) * math.log(sigma)
+        top = eng.subopt(s, s, gap=1.0)[0][1]
+        assert top == pytest.approx(eng.mfe(s, s).energy - sigma_shift, abs=1e-6)
+
+    def test_subopt_disconnected_pays_fewer_associations(self, eng):
+        """A suboptimal that lets a strand float free is component-aware: it pays
+        (L−k)·ΔG_assoc, one association fewer per extra component than a fully
+        connected structure of the same strands."""
+        from strider.structure.complex_fold import n_components
+        from strider.thermo.parameters_dna import JOIN_PENALTY
+        # S3 binds the S1·S2 duplex only weakly, so a structure with S3 free
+        # appears among the suboptimals.
+        def rc(x):
+            return x.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+        strands = ["GGGGCCCCAAAA", rc("GGGGCCCC") + "TT", "AAAATTTT"]
+        L = len(strands)
+        from strider.structure.sampling import subopt_complex
+        _, order = subopt_complex(strands, gap=12.0, celsius=37.0, material="dna")
+        lens = [len(strands[i]) for i in order]
+        out = eng.subopt(*strands, gap=6.0, max_structures=50)
+        ks = {n_components(plist, lens) for _, _, plist in out}
+        assert 1 in ks and max(ks) >= 2  # both connected and disconnected appear
+        # The structural energy (corrected − association − coaxial) must be
+        # recoverable: corrected = structural + (L−k)·JP + coaxial(≤0).
+        for _db, e, plist in out:
+            k = n_components(plist, lens)
+            assoc = eng._assoc_correction(L, k)
+            assert assoc == pytest.approx((L - k) * JOIN_PENALTY, abs=1e-9)
 
     def test_subopt_no_duplicate_structures(self, eng):
         out = eng.subopt(*RING3, gap=2.0)

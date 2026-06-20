@@ -120,12 +120,18 @@ class TestSubopt:
 
 class TestSuboptMultiStrand:
     def test_dimer_includes_mfe(self, engine):
-        from strider.structure.mfe import fold_mfe
+        # subopt energies are mfe-consistent free energies (loop + association +
+        # coaxial), so the top suboptimal matches engine.mfe up to the complex-
+        # level σ term (this homodimer has σ = 2).
+        import math
+        from strider.equilibrium import R, cyclic_symmetry
         out = engine.subopt("GCGCAATTGCGC", "GCGCAATTGCGC", gap=3.0)
-        m_db, m_e, _ = fold_mfe("GCGCAATTGCGC&GCGCAATTGCGC", 37.0, "dna",
-                                0.137, 0.01)
-        assert any(db == m_db for db, _, _ in out)
-        assert abs(out[0][1] - m_e) < 1e-6
+        m = engine.mfe("GCGCAATTGCGC", "GCGCAATTGCGC")
+        sigma_shift = R * (37.0 + 273.15) * math.log(
+            cyclic_symmetry(["GCGCAATTGCGC", "GCGCAATTGCGC"])
+        )
+        assert any(db == m.structure for db, _, _ in out)
+        assert abs(out[0][1] - (m.energy - sigma_shift)) < 1e-6
 
     def test_dimer_separator_in_dot_bracket(self, engine):
         out = engine.subopt("AAAACCCC", "GGGGTTTT", gap=3.0)
