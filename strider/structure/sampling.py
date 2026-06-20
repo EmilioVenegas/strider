@@ -521,7 +521,7 @@ def subopt_complex(
     max_structures: int = 200,
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
-) -> list[tuple[str, float, list[tuple[int, int]]]]:
+) -> tuple[list[tuple[str, float, list[tuple[int, int]]]], tuple[int, ...]]:
     """Order-invariant suboptimal enumeration for a multi-strand complex.
 
     The linear DP only represents structures non-crossing for one strand
@@ -534,12 +534,16 @@ def subopt_complex(
     one common order — the MFE-winning order — using pseudoknot brackets for any
     structure that crosses in that order.
 
-    Energies are *structural* (per-structure loop energy), so ``subopt[0]``
-    equals the order-invariant raw MFE (``fold_mfe`` of the winning order) — the
-    rotational-symmetry term σ is a complex-level ensemble correction that lives
-    in ``engine.mfe``/``pfunc``, not in a per-structure energy.  Returns
-    ``(dot_bracket, energy, pair_list)`` like :func:`subopt_structures`, sorted
-    ascending, capped at ``max_structures``.
+    Energies are *structural* (per-structure loop energy only): the
+    association penalty, coaxial-nick stabilisation, and the σ symmetry term are
+    complex-level corrections applied by the engine (:meth:`ThermoEngine.subopt`
+    turns these structural energies into ``mfe``-consistent free energies).
+    Returns ``(results, win_order)`` where ``results`` is a list of
+    ``(dot_bracket, energy, pair_list)`` like :func:`subopt_structures` (sorted
+    ascending, capped at ``max_structures``) and ``win_order`` is the winning
+    strand permutation the pairs/dot-brackets are expressed in, so the engine
+    can compute per-structure corrections (component count, coaxial nicks) in the
+    same frame.
     """
     from strider.structure.complex_fold import fold_complex
 
@@ -585,4 +589,4 @@ def subopt_complex(
         plist = sorted(pset)
         db = _render_pseudoknot(plist, n, win_nicks, "&")
         out.append((db, e, plist))
-    return out
+    return out, win_order

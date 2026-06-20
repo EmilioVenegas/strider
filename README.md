@@ -642,7 +642,7 @@ for db, e, _ in subopt_structures('GCGCAATTGCGC&GCGCAATTGCGC', gap=3.0):
 # ...
 ```
 
-Via the engine, `engine.subopt(*strands)` is **order-invariant** (like `engine.mfe`, see §7): it gathers suboptimals across strand arrangements, measures the gap from the global MFE, deduplicates, and reports them in the MFE-winning strand order (pseudoknot brackets `[]`/`{}` mark pairs that cross in that order) — so `engine.subopt(*strands)[0]` matches the order-invariant MFE regardless of how the strands are listed.
+Via the engine, `engine.subopt(*strands)` is **order-invariant** (like `engine.mfe`, see §7): it gathers suboptimals across strand arrangements, deduplicates, and reports them in the MFE-winning strand order (pseudoknot brackets `[]`/`{}` mark pairs that cross in that order). Its energies are **`mfe`-consistent free energies** — each structure's loop energy plus the **component-aware** association penalty `(L−k)·ΔG_assoc` (where `k` is the number of connected components of *that* structure, so a suboptimal that lets a strand float free pays one fewer association) plus its coaxial-nick stabilization. Hence for a heteromeric complex `engine.subopt(*strands)[0] == engine.mfe(*strands).energy` regardless of strand order; they differ only by the complex-level rotational-symmetry term σ (a `−RT·ln σ` ensemble correction, not a per-structure energy), which is nonzero only for homomeric complexes. Because the association discount can pull a partly-dissociated structure into the window, the `gap` is applied on these corrected free energies.
 
 Salt (`sodium_M` / `magnesium_M`) is applied per closed base pair, so both routines track [Na⁺]/[Mg²⁺]; at the 1 M Na⁺ / 0 Mg²⁺ reference the correction is exactly zero.
 
@@ -1873,7 +1873,7 @@ ThermoEngine(
 | `pairs(*sequences)` | `np.ndarray` | Pair-probability matrix only |
 | `ensemble_defect(seqs, target_structure, normalize=True)` | `float` | Expected mispaired nucleotides vs a target dot-bracket |
 | `sample(seq, n_samples, seed=None)` | `list[(str, list)]` | Boltzmann-sampled structures |
-| `subopt(*sequences, gap=1.0, max_structures=200)` | `list[(str, float, list)]` | Suboptimal structures within `gap` of MFE (single- or multi-strand; shares `mfe`'s DP) |
+| `subopt(*sequences, gap=1.0, max_structures=200)` | `list[(str, float, list)]` | Suboptimal structures within `gap` of MFE (single- or multi-strand; shares `mfe`'s DP; `mfe`-consistent free energies — component-aware association penalty + coaxial) |
 | `duplex_dg(seq1, seq2=None)` | `float` | ΔG of hybridization; `seq2=None` → intramolecular folding |
 | `ddg(reactants, products)` | `float` | ΔΔG = Σ G(products) − Σ G(reactants) (kcal/mol) |
 | `toehold_accessibility(seq, positions)` | `float` | Fraction of ensemble with all toehold positions unpaired |
@@ -2388,7 +2388,7 @@ The full suite (`pytest -m "slow or not slow"`) is **477 passed, 1 xfailed, 17 s
 | `test_tmsd.py` | 15 | toehold_kf table, Arrhenius correction, detailed balance, leakage_kf, Keq conversions |
 | `test_design.py` | 19 | SequenceDesigner SA convergence, DomainSpec, hard constraints, ensemble defect, MutationAnalyzer |
 | `test_mfe.py` | 16 | fold_mfe correctness, Zuker full-loop energetics, dot-bracket parsing, mountain vectors |
-| `test_sampling.py` | 20 | Boltzmann sampling distribution, subopt enumeration (incl. multi-strand + brute-force completeness), `subopt[0]==fold_mfe` consistency, salt responsiveness, energy gap correctness |
+| `test_sampling.py` | 20 | Boltzmann sampling distribution, subopt enumeration (incl. multi-strand + brute-force completeness), subopt energy consistency (single-strand `subopt[0]==fold_mfe`; multi-strand `subopt[0]==engine.mfe` up to the σ term), salt responsiveness, energy gap correctness |
 | `test_equilibrium.py` | 17 | concentration solver convergence, σ correction, water-molarity standard state |
 | `test_tube.py` | 29 | Strand / Complex / SetSpec / ComplexSet / Tube / TubeResult / tube_analysis driver |
 | `test_parameter_sets.py` | 31 | native ParameterSet adapter, Turner-schema JSON round-trip, engine integration, advanced-table overrides (dangle, terminal mismatch, interior_1_1, hairpin tetraloop, coaxial stack) and the bundled `dna-low-salt-50mM-Na.json` curated set |

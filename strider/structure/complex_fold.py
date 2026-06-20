@@ -120,18 +120,27 @@ def _strand_of(pos: int, nicks: list[int]) -> int:
     return s
 
 
-def is_connected(
+def n_components(
     pairs: list[tuple[int, int]], strand_lens: list[int]
-) -> bool:
-    """True if the base-pair graph connects every strand into one component.
+) -> int:
+    """Number of connected components of the inter-strand base-pair graph.
+
+    Strands are nodes; an inter-strand base pair is an edge.  Returns how many
+    independent pieces the strands fall into under ``pairs`` — 1 for a fully
+    connected complex, ``len(strand_lens)`` for fully dissociated strands.
+
+    This sets the bimolecular association count for a structure: forming ``k``
+    connected components out of ``L`` strands costs ``L − k`` associations (each
+    component of ``m`` strands needs ``m − 1``; the sum telescopes to ``L − k``),
+    so a structure's association penalty is ``(L − k)·ΔG_assoc`` — full
+    ``(L − 1)·ΔG_assoc`` only when the whole complex is connected (``k = 1``).
 
     ``strand_lens`` are the strand lengths in the *folded* (concatenation)
-    order; ``pairs`` are 0-indexed over that concatenation.  A single strand is
-    trivially connected.
+    order; ``pairs`` are 0-indexed over that concatenation.
     """
     n_strands = len(strand_lens)
     if n_strands <= 1:
-        return True
+        return 1 if n_strands == 1 else 0
     nicks = _nicks_for(strand_lens)
     parent = list(range(n_strands))
 
@@ -146,8 +155,21 @@ def is_connected(
         if si != sj:
             parent[find(si)] = find(sj)
 
-    root = find(0)
-    return all(find(s) == root for s in range(n_strands))
+    return len({find(s) for s in range(n_strands)})
+
+
+def is_connected(
+    pairs: list[tuple[int, int]], strand_lens: list[int]
+) -> bool:
+    """True if the base-pair graph connects every strand into one component.
+
+    ``strand_lens`` are the strand lengths in the *folded* (concatenation)
+    order; ``pairs`` are 0-indexed over that concatenation.  A single strand is
+    trivially connected.
+    """
+    if len(strand_lens) <= 1:
+        return True
+    return n_components(pairs, strand_lens) == 1
 
 
 def distinct_orders(strands: list[str]) -> list[tuple[int, ...]]:

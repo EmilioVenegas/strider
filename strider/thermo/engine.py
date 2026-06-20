@@ -212,16 +212,28 @@ class ThermoEngine:
 
         For a multi-strand complex the enumeration is *order-invariant* (like
         :meth:`mfe`): suboptimals are gathered across strand arrangements,
-        deduplicated, measured from the global MFE, and reported in the MFE-
-        winning strand order (pseudoknot brackets ``[]``/``{}`` mark pairs that
-        cross in that order).  Energies are structural, so ``subopt(*strands)[0]``
-        equals the raw (σ-free) order-invariant MFE regardless of strand order —
-        i.e. ``mfe(*strands)`` minus its rotational-symmetry term.
+        deduplicated, and reported in the MFE-winning strand order (pseudoknot
+        brackets ``[]``/``{}`` mark pairs that cross in that order).
+
+        Energies are ``mfe``-consistent free energies: each structure's loop
+        energy plus the **component-aware** association penalty ``(L−k)·ΔG_assoc``
+        (``k`` = number of connected components of *that* structure, so a
+        suboptimal that lets a strand float free pays one fewer association) plus
+        its coaxial-nick stabilisation.  Hence for a heteromeric complex
+        ``subopt(*strands)[0] == mfe(*strands).energy``; they differ only by the
+        complex-level rotational-symmetry term σ (a ``−RT ln σ`` ensemble
+        correction, not a per-structure energy), which is nonzero only for
+        homomeric complexes.  Because the association discount can pull a
+        partly-dissociated structure into the window, the gap is applied on these
+        corrected energies (the enumeration widens internally to capture them;
+        deeply dissociated states of a binding complex sit far above the gap and
+        are better read from the dissociated species directly).
         """
         if not sequences:
             raise ValueError("subopt requires at least one sequence")
         strands = "&".join(sequences).replace("+", "&").split("&")
         from strider.structure.sampling import subopt_complex, subopt_structures
+        from strider.structure.complex_fold import n_components
         from strider.thermo._param_context import param_context
         with param_context(self._param_override()):
             if len(strands) <= 1:
@@ -230,11 +242,40 @@ class ThermoEngine:
                     max_structures=max_structures,
                     sodium_M=self.sodium, magnesium_M=self.magnesium,
                 )
-            return subopt_complex(
-                strands, gap=gap, celsius=self.celsius, material=self.material,
-                max_structures=max_structures,
+            n = len(strands)
+            # Widen the structural enumeration so suboptimals that the
+            # association discount brings into the gap are not missed, then
+            # re-window on the corrected free energies.  One ΔG_assoc of slack
+            # captures a singly-dissociated component (a strand floating free);
+            # this is the regime where disconnected structures are competitive,
+            # since for a strongly-bound complex they sit far above the gap (and
+            # `mfe()` itself returns a disconnected structure when the strands do
+            # not all bind).  Deliberately not scaled by strand count: a wider
+            # window only re-enumerates connected structures that are filtered
+            # back out, at large cost for big complexes.
+            per_assoc = self._assoc_correction(2)        # ΔG_assoc for this material
+            enum_gap = gap + per_assoc
+            raw, order = subopt_complex(
+                strands, gap=enum_gap, celsius=self.celsius, material=self.material,
+                max_structures=max(2 * max_structures, 200),
                 sodium_M=self.sodium, magnesium_M=self.magnesium,
             )
+            ordered_lens = [len(strands[i]) for i in order]
+            ordered_seq = "".join(strands[i] for i in order)
+            corrected: list[tuple[str, float, list[tuple[int, int]]]] = []
+            for db, e_struct, plist in raw:
+                k = n_components(plist, ordered_lens)
+                energy = (
+                    e_struct
+                    + self._assoc_correction(n, k)
+                    + self._coaxial_correction(plist, ordered_lens, ordered_seq)
+                )
+                corrected.append((db, energy, plist))
+            corrected.sort(key=lambda t: t[1])
+            if corrected:
+                lo = corrected[0][1]
+                corrected = [t for t in corrected if t[1] <= lo + gap + 1e-7]
+            return corrected[:max_structures]
 
     def pairs(self, *sequences: str) -> np.ndarray:
         """Pair-probability matrix P[i,j] for the given (multi-)strand complex."""
@@ -440,28 +481,32 @@ class ThermoEngine:
             return R * (celsius + 273.15) * math.log(sigma)
         return 0.0
 
-    def _assoc_correction(self, n_strands: int, connected: bool = True) -> float:
-        """Bimolecular association penalty ``(L−1)·ΔG_assoc`` for a connected complex.
+    def _assoc_correction(self, n_strands: int, n_components: int = 1) -> float:
+        """Bimolecular association penalty ``(L−k)·ΔG_assoc`` for a structure.
 
-        Each strand beyond the first costs one association (loss of translational
-        / rotational entropy on binding); Dirks et al. (2007) charge this once per
-        association, so a connected ``L``-strand complex pays ``(L−1)·ΔG_assoc``.
+        Each strand beyond the first in a connected piece costs one association
+        (loss of translational / rotational entropy on binding); Dirks et al.
+        (2007) charge this once per association.  A structure that splits ``L``
+        strands into ``k = n_components`` independent pieces therefore pays
+        ``(L−k)·ΔG_assoc`` — full ``(L−1)·ΔG_assoc`` only when the whole complex
+        is connected (``k = 1``), and ``0`` when every strand is free
+        (``k = L``), since a dissociated piece never paid the association cost.
         NUPACK includes the identical term in its complex free energy (verified:
-        zeroing ``join_penalty`` in ``dna04`` shifts the complex ΔG by exactly
-        ``(L−1)·1.96``), so applying it here is required for thermodynamic parity
-        and for physically meaningful concentrations.
+        zeroing ``join_penalty`` in ``dna04`` shifts the connected complex ΔG by
+        exactly ``(L−1)·1.96``), so applying it here is required for thermodynamic
+        parity and for physically meaningful concentrations.
 
         Sourced from ``parameters_{dna,rna}.JOIN_PENALTY`` (DNA 1.96, RNA 4.09 at
-        37 °C).  Returns 0 for a single strand or a disconnected MFE structure
-        (which describes a lower-order species, not an ``L``-strand complex).
+        37 °C).  Returns 0 for a single strand.
         """
-        if n_strands < 2 or not connected:
+        n_assoc = n_strands - n_components
+        if n_strands < 2 or n_assoc <= 0:
             return 0.0
         if self.material == "dna":
             from strider.thermo.parameters_dna import JOIN_PENALTY
         else:
             from strider.thermo.parameters_rna import JOIN_PENALTY
-        return (n_strands - 1) * float(JOIN_PENALTY)
+        return n_assoc * float(JOIN_PENALTY)
 
     def _coaxial_correction(
         self, pairs: list[tuple[int, int]], strand_lens: list[int], seq: str
@@ -571,7 +616,6 @@ class ThermoEngine:
                 structure, energy, pairs, order = (
                     cf.structure, cf.energy, cf.pairs, cf.order,
                 )
-                connected = cf.connected
             else:
                 # Too many strands for an order search; fold the given order.
                 order = tuple(range(len(sequences)))
@@ -579,13 +623,13 @@ class ThermoEngine:
                     "&".join(sequences), self.celsius, self.material,
                     self.sodium, self.magnesium,
                 )
-                from strider.structure.complex_fold import is_connected
-                connected = is_connected(pairs, [len(s) for s in sequences])
         seq = "&".join(sequences[i] for i in order)
         energy += self._mfe_sigma_correction(sequences, self.celsius)
         if len(sequences) > 1:
-            energy += self._assoc_correction(len(sequences), connected)
+            from strider.structure.complex_fold import n_components
             ordered_lens = [len(sequences[i]) for i in order]
+            k = n_components(pairs, ordered_lens)
+            energy += self._assoc_correction(len(sequences), k)
             energy += self._coaxial_correction(pairs, ordered_lens, seq.replace("&", ""))
         return MFEResult(
             energy=energy, structure=structure, base_pairs=pairs,
