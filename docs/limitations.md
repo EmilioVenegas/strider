@@ -45,7 +45,7 @@ judge fit. These fall into two groups.
   NUPACK includes in its complex free energy (verified: zeroing NUPACK's `join_penalty` shifts its
   complex ΔG by exactly `(L−1)·1.96`), plus a coaxial-stacking correction at flush strand nicks.
   The dominant residual vs NUPACK was previously characterised here as "ensemble breadth"; closer
-  analysis (`STRIDER_VS_NUPACK.md` Part III·K and `scratch/probe_*`) shows it is instead a
+  analysis (`STRIDER_STATUS.md` §3 and `scratch/probe_*`) shows it is instead a
   **sequence- and length-independent per-helix-terminus free-energy offset**: NUPACK assigns each
   helix terminus an extra **≈ −1.24 kcal/mol** (≈ −2.47 per blunt duplex, *exactly* constant across
   all four closing-pair identities and every tested length). The evidence that it is **structural,
@@ -68,7 +68,7 @@ judge fit. These fall into two groups.
   absorb the per-terminus term for the single exterior terminus of a folded strand; the deficit
   surfaces only for the *extra* exterior termini that multi-strandedness (nicks) introduces. The
   coaxial-junction part is separately recovered (a flush coaxial junction contributes ≈ −2 kcal/mol
-  that strider's nick-aware DP omits). See `STRIDER_VS_NUPACK.md`.
+  that strider's nick-aware DP omits). See `STRIDER_STATUS.md` §3.
 
 For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools —
 neither NUPACK nor ViennaRNA models Mg²⁺.

@@ -1,7 +1,7 @@
 """
 Salt (Na⁺/Mg²⁺) and temperature-dependent ΔG regression tests.
 
-Covers the three workstreams of DIMER_SALT_TEMP_PLAN.md:
+Covers the three salt/temperature workstreams:
   1. Salt in the native MFE DP (fold_mfe).
   2. Mg²⁺ in the two-state duplex (nn_dna.duplex_dg).
   3. Temperature-blended ParameterSet (thermo.temperature) wired into the engine.

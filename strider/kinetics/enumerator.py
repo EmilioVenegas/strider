@@ -9,7 +9,7 @@ the transitions between them, assigns detailed-balance rate constants from the
 active :class:`~strider.thermo.engine.ThermoEngine`, and emits a ready-to-simulate
 ``mantis.CRNetwork``.
 
-Pipeline (Frontier §5 of ``STRIDER_VS_NUPACK.md``)::
+Pipeline (Frontier §5 / §2 of ``STRIDER_STATUS.md``)::
 
     strands + (concentrations) ─▶ enumerate complexes
                                ─▶ bind / 3-way branch-migration / open transitions

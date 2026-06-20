@@ -8,7 +8,7 @@
 
 <p align="center">
 <a href="https://pypi.org/project/strider-dna/"><img src="https://img.shields.io/pypi/v/strider-dna" alt="PyPI"></a>
-<a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-477%20passed-brightgreen" alt="Tests"></a>
+<a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-646%20passed-brightgreen" alt="Tests"></a>
 <a href="#installation"><img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python"></a>
 <a href="#license"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License: MIT"></a>
 </p>
@@ -2376,11 +2376,11 @@ NUPACK nor ViennaRNA models Mg²⁺ — see the salt sections above.
 ```bash
 cd strider
 pip install -e .[dev]
-pytest tests/ -v                      # default run: deselects the 4 `slow` tests
+pytest tests/ -v                      # default run: deselects the 6 `slow` tests
 pytest tests/ -m "slow or not slow"   # full run incl. slow accuracy gates
 ```
 
-The full suite (`pytest -m "slow or not slow"`) is **477 passed, 1 xfailed, 17 skipped** in a clean environment. The skips are all optional peer dependencies — ViennaRNA (`RNA`), `mantis`, and `torch` (the `diff` extra); installing those extras converts the corresponding skips into passes. The 4 `slow` tests are deselected by `pytest` by default and include the CI-enforced structure-prediction F-measure gate (mean F ≥ 0.95 on the canonical hairpin set). No external thermodynamic tool is required to run the core suite.
+The full suite (`pytest -m "slow or not slow"`) is **646 passed, 1 xfailed, 11 skipped** in a clean environment. The skips are all optional peer dependencies — ViennaRNA (`RNA`), `mantis`, and `torch` (the `diff` extra); installing those extras converts the corresponding skips into passes. The 6 `slow` tests are deselected by `pytest` by default and include the CI-enforced structure-prediction F-measure gate (mean F ≥ 0.95 on the canonical hairpin set). No external thermodynamic tool is required to run the core suite.
 
 | File | Tests | What is covered |
 |---|---|---|

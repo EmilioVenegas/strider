@@ -91,7 +91,7 @@ def hairpin_thermo(
         onto the hairpin (see :func:`_owczarzy_salt_dg`).  Tan-Chen reproduces the
         experimental Mg²⁺ Tm slope (~0.7 °C/mM) where the per-bp model under-shoots
         (~0.4); the Owczarzy path is GC-aware and uses the corrected Mg term — see
-        the README / DIMER_SALT_TEMP_PLAN.md benchmark.
+        the README salt benchmark.
 
     Raises
     ------
