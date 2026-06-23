@@ -49,6 +49,55 @@ class TestDrawCascade:
             reaction.draw_cascade([], engine=engine)
 
 
+class TestAssemblyLandscape:
+    def test_cha_bridge_landscape(self, engine, cha_seqs):
+        bridge = CHABridge(cha_seqs, engine=engine)
+        ax_e, ax_v = reaction.draw_assembly_landscape(bridge, engine=engine)
+        fig = ax_e.figure
+        texts = [t.get_text() for ax in fig.axes for t in ax.texts]
+        # energy column carries per-step ΔΔG (mathtext), net ΔG and step labels
+        assert any("Delta" in t for t in texts)
+        assert any("net" in t for t in texts)
+        assert any("R1" in t for t in texts)
+        # the catalyst recycle annotation is drawn by default for a bridge
+        assert any("recycled" in t for t in texts)
+        # one horizontal energy level per macrostate (4 for a CHA with CP)
+        from matplotlib.collections import LineCollection
+        levels = [c for c in ax_e.collections if isinstance(c, LineCollection)]
+        assert sum(len(c.get_segments()) for c in levels) == 4
+        plt.close(fig)
+
+    def test_explicit_states(self, engine):
+        states = [
+            {"energy": 0.0, "components": [("A", "GGGGCCCC"), ("B", "GGGGCCCC")]},
+            {"energy": -6.0, "components": [("A·B", ["GGGGCCCC", "GGGGCCCC"])],
+             "caption": "bound", "scale": 1.4},
+        ]
+        ax_e, ax_v = reaction.draw_assembly_landscape(
+            states, engine=engine, recycle=False, step_labels=["k1"])
+        texts = [t.get_text() for t in ax_e.texts]
+        assert any("k1" in t for t in texts)
+        # auto-captioned first state joins component labels; explicit one kept
+        viz_texts = [t.get_text() for t in ax_v.texts]
+        assert "bound" in viz_texts
+        plt.close(ax_e.figure)
+
+    def test_into_provided_axes(self, engine):
+        fig, (a, b) = plt.subplots(1, 2)
+        states = [
+            {"energy": 0.0, "components": [("A", "GGGGCCCC")]},
+            {"energy": -3.0, "components": [("A", "GGGGCCCC")]},
+        ]
+        out_e, out_v = reaction.draw_assembly_landscape(
+            states, engine=engine, axes=(a, b), recycle=False)
+        assert out_e is a and out_v is b
+        plt.close(fig)
+
+    def test_empty_raises(self, engine):
+        with pytest.raises(ValueError):
+            reaction.draw_assembly_landscape([], engine=engine)
+
+
 class TestDrawReactionStep:
     def test_single_step(self, engine):
         fig = reaction.draw_reaction_step(

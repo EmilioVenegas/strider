@@ -24,7 +24,11 @@ from strider.viz.arc import arc_diagram
 from strider.viz.circuit_diagram import cha_circuit
 from strider.viz.layout import Layout2D, layout_structure
 from strider.viz.mountain_plot import energy_landscape, mountain_plot
-from strider.viz.reaction import draw_cascade, draw_reaction_step
+from strider.viz.reaction import (
+    draw_assembly_landscape,
+    draw_cascade,
+    draw_reaction_step,
+)
 from strider.viz.structure2d import draw_complex, draw_structure
 
 __all__ = [
@@ -32,6 +36,7 @@ __all__ = [
     "draw_complex",
     "draw_cascade",
     "draw_reaction_step",
+    "draw_assembly_landscape",
     "draw_accessibility_track",
     "per_position_accessibility",
     "arc_diagram",

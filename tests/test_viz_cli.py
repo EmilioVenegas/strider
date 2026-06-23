@@ -49,6 +49,13 @@ class TestDrawCLI:
         rc = main(["draw", "reaction", "--spec", str(spec), "--rates", "--out", out])
         assert rc == 0 and (tmp_path / "rxn.png").stat().st_size > 0
 
+    def test_landscape(self, tmp_path, cha_seqs):
+        spec = tmp_path / "spec.json"
+        spec.write_text(json.dumps(cha_seqs))
+        out = _out(tmp_path, "land.png")
+        rc = main(["draw", "landscape", "--spec", str(spec), "--out", out])
+        assert rc == 0 and (tmp_path / "land.png").stat().st_size > 0
+
     def test_svg_output(self, tmp_path):
         out = _out(tmp_path, "s.svg")
         assert main(["draw", "structure", "GGGGAAAACCCC", "--out", out]) == 0

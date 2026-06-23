@@ -92,6 +92,10 @@ This page contains the auto-generated documentation for the `strider` source cod
     options:
       show_root_heading: true
 
+::: strider.viz.reaction.draw_assembly_landscape
+    options:
+      show_root_heading: true
+
 ::: strider.viz.annotate.draw_accessibility_track
     options:
       show_root_heading: true

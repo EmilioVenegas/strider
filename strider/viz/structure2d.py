@@ -76,7 +76,10 @@ def draw_structure(
     strand_colors=None,
     base_text: bool = True,
     base_radius: float = 0.42,
+    minimal: bool = False,
+    ribbon_width: float = 0.6,
     labels: bool = True,
+    colorbar: bool = True,
     nick_markers: bool = False,
     relax_iters: int = 0,
     repel_range: float = 0.85,
@@ -101,6 +104,17 @@ def draw_structure(
     strand_colors : identity-based strand colors — a ``{name: color}`` map (with
                     ``strand_names``) or a list aligned to strand order. Keeps a
                     given strand the *same* color across panels.
+    colorbar      : draw the unpaired-probability colorbar for
+                    ``color="accessibility"`` (set False to share one colorbar
+                    across several panels)
+    minimal       : draw a stripped-down "thumbnail" fold — each strand is a
+                    single outlined ribbon tracing its backbone (a plain
+                    perimeter) instead of per-base balls, with no nucleotide
+                    letters or position numbers, only strand-ID labels. Stays
+                    legible when the figure is inserted at a small size.
+    ribbon_width  : full width of the per-strand ribbon in ``minimal`` mode, in
+                    **data units** (like ``base_radius``) so it scales with the
+                    structure and stays proportional at small render sizes
     relax_iters   : passed through to the layout (0 disables relaxation)
     loop_tightness : margin on each arm's angular wedge in the ``tree`` layout
                     (default 1.5); lower to shrink multiloop radii / shorten
@@ -131,6 +145,13 @@ def draw_structure(
         _, ax = plt.subplots(figsize=(7, 6))
 
     xy = layout.coords
+
+    if minimal:
+        return _draw_minimal(
+            ax, layout, color,
+            strand_names=strand_names, strand_colors=strand_colors,
+            labels=labels, ribbon_width=ribbon_width, title=title,
+        )
 
     # backbone (nick gaps already omitted by the layout)
     for i, j in layout.backbone:
@@ -164,6 +185,7 @@ def draw_structure(
 
     # strand names + per-strand position numbers, placed by ONE collision
     # resolver so names and numbers also avoid each other (not just bases)
+    label_pos = []
     if labels:
         names = strand_names or (
             [f"S{k + 1}" for k in range(layout.n_strands)]
@@ -188,7 +210,7 @@ def draw_structure(
 
         overlay_domains(ax, layout, domains, radius=base_radius * 1.35)
 
-    if mappable is not None:
+    if mappable is not None and colorbar:
         cb = ax.figure.colorbar(mappable, ax=ax, fraction=0.04, pad=0.02)
         cb.set_label("unpaired probability")
 
@@ -228,6 +250,201 @@ def _draw_base_letters(ax, xy, seq, radius):
               .scale(scale)
               .translate(xy[i, 0], xy[i, 1]))
         ax.add_patch(PathPatch(tp.transformed(tr), color="white", lw=0, zorder=4))
+
+
+def _strand_color(sid, strand_names, strand_colors):
+    """Resolve a single strand's color, honoring identity-based overrides."""
+    if strand_colors is not None:
+        if isinstance(strand_colors, dict):
+            nm = strand_names[sid] if strand_names and sid < len(strand_names) else None
+            if nm in strand_colors:
+                return strand_colors[nm]
+        elif sid < len(strand_colors):
+            return strand_colors[sid]
+    return style.strand_color(sid)
+
+
+def _ribbon_patches(seg, halfw):
+    """Polygons for a constant-width tube of half-width ``halfw`` (in DATA units)
+    along the backbone polyline ``seg``: one capsule rectangle per segment plus a
+    circle at every vertex (round joins/caps). Because the width is in data units
+    the tube scales *with* the structure, so it never looks fat when the figure is
+    rendered small (the ball-circle path uses the same data-unit trick)."""
+    import numpy as np
+    from matplotlib.patches import Circle, Polygon
+
+    patches = []
+    for i in range(len(seg) - 1):
+        a, b = seg[i], seg[i + 1]
+        d = b - a
+        L = float(np.linalg.norm(d))
+        if L < 1e-9:
+            continue
+        nrm = np.array([-d[1], d[0]]) / L * halfw       # perpendicular offset
+        patches.append(Polygon([a + nrm, b + nrm, b - nrm, a - nrm], closed=True))
+    for p in seg:
+        patches.append(Circle((p[0], p[1]), halfw))
+    return patches
+
+
+def _draw_minimal(
+    ax,
+    layout: Layout2D,
+    color: str,
+    *,
+    strand_names: list[str] | None = None,
+    strand_colors=None,
+    labels: bool = True,
+    ribbon_width: float = 0.6,
+    title: str | None = None,
+):
+    """Render a stripped-down "thumbnail" fold.
+
+    Each strand becomes one outlined ribbon tracing its backbone (a plain
+    perimeter) rather than a chain of labeled base balls: no nucleotide letters,
+    no position numbers, only strand-ID labels. Base-pair rungs are kept as faint
+    lines so the pairing topology still reads, and the whole thing stays legible
+    when the figure is shrunk for inset use.
+
+    ``ribbon_width`` is the tube's full width in **data units** (like the base
+    circles), so the ribbon scales with the structure — it stays proportional,
+    not fat, when the figure is rendered at a small size. The labels are likewise
+    offset in data units, so the whole drawing scales uniformly.
+    """
+    import numpy as np
+    from matplotlib.collections import PatchCollection
+
+    xy = layout.coords
+    halfw = ribbon_width / 2.0
+    outline = halfw + max(0.05, 0.13 * halfw)        # dark border peeks past fill
+
+    # faint pairing lines underneath so the fold's topology survives the strip-down
+    for i, j in layout.rungs:
+        ax.plot(xy[[i, j], 0], xy[[i, j], 1], color=style.RUNG, lw=0.7, zorder=1)
+    for i, j in layout.crossing:
+        ax.plot(
+            xy[[i, j], 0], xy[[i, j], 1],
+            color=style.C_ACCENT, lw=0.7, ls="--", alpha=0.7, zorder=1,
+        )
+
+    # one outlined ribbon per strand: a dark perimeter layer just under a colored
+    # fill layer; both are data-unit polygon tubes so they scale with the layout
+    off = 0
+    for sid, L in enumerate(layout.strand_lens):
+        if L <= 0:
+            continue
+        seg = xy[off:off + L]
+        col = _strand_color(sid, strand_names, strand_colors)
+        ax.add_collection(PatchCollection(
+            _ribbon_patches(seg, outline), facecolors="#333333",
+            edgecolors="none", zorder=2,
+        ))
+        ax.add_collection(PatchCollection(
+            _ribbon_patches(seg, halfw), facecolors=col,
+            edgecolors="none", zorder=3,
+        ))
+        off += L
+
+    # finalize the view first so the data→display transform is valid (the labels
+    # are placed/​de-overlapped in points below). The ribbon is in data units, so
+    # the limits come from the coordinates alone.
+    if len(xy):
+        pad = halfw + 0.8
+        ax.set_xlim(xy[:, 0].min() - pad, xy[:, 0].max() + pad)
+        ax.set_ylim(xy[:, 1].min() - pad, xy[:, 1].max() + pad)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    if title:
+        ax.set_title(title, family="sans-serif")
+
+    # strand-ID labels only, colored to match their ribbon. Unlike the ribbon,
+    # labels are meant to stay *readable* at small sizes (that's the point of the
+    # mode), so they keep a fixed physical font and a points-space gap, and are
+    # de-overlapped in points — so adjacent strand tips never collide into an
+    # unreadable blob even when the fold is rendered tiny.
+    if labels and len(xy):
+        names = strand_names or (
+            [f"S{k + 1}" for k in range(layout.n_strands)]
+            if layout.n_strands > 1 else ["S1"]
+        )
+        centroid = xy.mean(axis=0)
+        specs = []                           # (anchor_xy, dir_unit, text, color)
+        off = 0
+        for sid, L in enumerate(layout.strand_lens):
+            nm = names[sid] if sid < len(names) else None
+            if nm and L > 0:
+                # anchor at the strand's outermost base (farthest from centroid),
+                # pushed radially outward into the open space past the tip
+                seg = xy[off:off + L]
+                gi = off + int(np.argmax(((seg - centroid) ** 2).sum(axis=1)))
+                d = xy[gi] - centroid
+                nrm = float(np.linalg.norm(d))
+                d = d / nrm if nrm > 1e-6 else np.array([1.0, 0.0])
+                specs.append((xy[gi], d, nm,
+                              _strand_color(sid, strand_names, strand_colors)))
+            off += L
+        _place_minimal_labels(ax, specs, gap_pt=8.0, fontsize=9)
+
+    return ax
+
+
+def _place_minimal_labels(ax, specs, *, gap_pt=8.0, fontsize=9):
+    """Annotate strand IDs at a fixed physical gap, de-overlapped in points.
+
+    The label font and its clearance from the anchor are physical (points), so the
+    IDs stay readable when the fold is rendered tiny; overlapping labels are then
+    separated in that same points space, so adjacent strand tips never collide.
+    Offsets are emitted via ``annotate(textcoords="offset points")``.
+    """
+    if not specs:
+        return
+    import numpy as np
+
+    fig = ax.figure
+    fig.canvas.draw()                         # finalize transData for the anchors
+    px_to_pt = 72.0 / fig.dpi
+
+    anchors = np.array([s[0] for s in specs], float)
+    dirs = np.array([s[1] for s in specs], float)
+    anchor_pt = ax.transData.transform(anchors) * px_to_pt   # pts, dpi-independent
+    pos = anchor_pt + dirs * gap_pt
+    half = np.array([[0.32 * fontsize * len(s[2]) + 1.5, 0.62 * fontsize]
+                     for s in specs])
+
+    for _ in range(80):
+        moved = False
+        for a in range(len(pos)):
+            for b in range(a + 1, len(pos)):
+                delta = pos[a] - pos[b]
+                ox = (half[a][0] + half[b][0]) - abs(delta[0])
+                oy = (half[a][1] + half[b][1]) - abs(delta[1])
+                if ox > 0 and oy > 0:         # AABB overlap → split on shallow axis
+                    if ox <= oy:
+                        s = (ox / 2 + 0.5) * (1.0 if delta[0] >= 0 else -1.0)
+                        pos[a][0] += s
+                        pos[b][0] -= s
+                    else:
+                        s = (oy / 2 + 0.5) * (1.0 if delta[1] >= 0 else -1.0)
+                        pos[a][1] += s
+                        pos[b][1] -= s
+                    moved = True
+        for a in range(len(pos)):             # keep each label off its own anchor
+            v = pos[a] - anchor_pt[a]
+            n = float(np.linalg.norm(v))
+            if n < gap_pt:
+                u = dirs[a] if n < 1e-6 else v / n
+                pos[a] = anchor_pt[a] + u * gap_pt
+                moved = True
+        if not moved:
+            break
+
+    for (anchor, _d, text, color), off_pt in zip(specs, pos - anchor_pt):
+        ax.annotate(
+            text, xy=anchor, xytext=(off_pt[0], off_pt[1]),
+            textcoords="offset points", ha="center", va="center",
+            fontsize=fontsize, fontweight="bold", color=color,
+            zorder=6, clip_on=False, annotation_clip=False,
+        )
 
 
 def _label_specs(xy, strand_lens, names, radius, rungs):
@@ -441,6 +658,7 @@ def draw_complex(
     names: list[str] | None = None,
     color: str = "strand",
     reorder: bool = True,
+    minimal: bool = False,
     relax_iters: int = 0,
     repel_range: float = 0.85,
     method: str = "auto",
@@ -466,6 +684,12 @@ def draw_complex(
     ``method="radial"`` if wanted.  ``loop_tightness`` (default 1.5) shrinks the
     tree layout's multiloop radii — lower it (e.g. 0.8) to pull crowded junction
     linkers in; too low and the arms start to collide.
+
+    ``minimal=True`` draws a stripped-down thumbnail: each strand is a single
+    outlined ribbon (a plain perimeter) labeled only by its ID, with no base
+    balls, nucleotide letters, or position numbers — meant for insetting at small
+    sizes. ``ribbon_width`` (forwarded to :func:`draw_structure`) sets its width
+    in data units, so the ribbon scales with the structure at any render size.
     """
     from strider.structure.dot_bracket import parse_pairs
     from strider.viz import geometry as _geom
@@ -513,6 +737,7 @@ def draw_complex(
     joined = "&".join(seqs)
     return draw_structure(
         joined, pairs=pairs, engine=engine, ax=ax, color=color,
-        strand_names=names, relax_iters=relax_iters, repel_range=repel_range,
-        method=method, loop_tightness=loop_tightness, **kw,
+        strand_names=names, minimal=minimal, relax_iters=relax_iters,
+        repel_range=repel_range, method=method, loop_tightness=loop_tightness,
+        **kw,
     )

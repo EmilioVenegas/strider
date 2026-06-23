@@ -83,6 +83,32 @@ dashed arrow. An explicit step is `(reactants, products, meta)` where each
 species is a sequence, a list of sequences, a `(label, payload)` tuple, or a
 `Complex`, and `meta` may carry `ddg`, `rate`, `label`, and `leak`.
 
+## Assembly free-energy landscape
+
+`draw_assembly_landscape` renders a pathway as an **energy staircase beside its
+assembled complexes**: a classic energy-level diagram (each macrostate a level at
+its free energy, with downhill arrows and per-step ΔΔG) next to a column of
+minimalist native-viz cartoons of the complex(es) present at each level, tied
+together by faint leaders. An optional curved arrow shows a recycled catalyst.
+
+```python
+from strider import ThermoEngine, draw_assembly_landscape
+from strider.bridge.mantis_bridge import CHABridge
+
+bridge = CHABridge({"mirna": MIR21, "H1": h1, "H2": h2, "CP": cp}, engine=eng)
+# pass a bridge to auto-build the CHA macrostate ladder + miR-21 recycle loop
+ax_energy, ax_viz = draw_assembly_landscape(bridge, engine=eng)
+ax_energy.figure.savefig("landscape.png", dpi=150, bbox_inches="tight")
+```
+
+Pass `axes=(ax_energy, ax_viz)` to draw into an existing multi-panel figure.
+States can also be given explicitly as dicts `{energy, components, caption?,
+scale?}` (or tuples); each `component` is a species (a `(label, sequences)` pair,
+`Complex`, or sequence string/list) drawn side by side. Use `recycle={"src": i,
+"dst": j, "label": ..., "color": ...}` to draw a catalyst loop (or `recycle=False`
+to omit), `step_labels` to name the ΔΔG steps, and `scale` to enlarge a state's
+cartoon.
+
 ## Arc and mountain plots
 
 `arc_diagram` draws pairs as semicircular arcs (colored by pair type,
@@ -100,4 +126,5 @@ strider draw complex GGGGAAAACCCC GGGGTTTTCCCC --names A B --out duplex.png
 strider draw accessibility <H1> --domains '{"toehold":[0,6]}' --out acc.png
 strider draw arc "<H1>&<H2>" --color-by strand --out arc.svg
 strider draw reaction --spec cha.json --rates --out cascade.png
+strider draw landscape --spec cha.json --out landscape.png
 ```

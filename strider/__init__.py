@@ -204,6 +204,7 @@ __all__ = [
     "to_vienna", "to_ct", "to_bpseq", "to_fasta", "to_oxdna", "write",
     # Visualization (lazy; require matplotlib)
     "draw_structure", "draw_complex", "draw_cascade", "draw_reaction_step",
+    "draw_assembly_landscape",
     "draw_accessibility_track", "arc_diagram", "mountain_plot", "energy_landscape",
     "cha_circuit", "layout_structure",
 ]
@@ -221,6 +222,7 @@ _LAZY = {
     "draw_complex": ("strider.viz.structure2d", "draw_complex", "viz"),
     "draw_cascade": ("strider.viz.reaction", "draw_cascade", "viz"),
     "draw_reaction_step": ("strider.viz.reaction", "draw_reaction_step", "viz"),
+    "draw_assembly_landscape": ("strider.viz.reaction", "draw_assembly_landscape", "viz"),
     "draw_accessibility_track": ("strider.viz.annotate", "draw_accessibility_track", "viz"),
     "arc_diagram": ("strider.viz.arc", "arc_diagram", "viz"),
     "mountain_plot": ("strider.viz.mountain_plot", "mountain_plot", "viz"),
