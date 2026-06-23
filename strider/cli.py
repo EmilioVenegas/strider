@@ -190,7 +190,10 @@ def cmd_draw_complex(args) -> int:
     eng = _draw_engine(args)
     from strider.viz.structure2d import draw_complex
     seqs = [_read_sequence(s) for s in args.sequences]
-    ax = draw_complex(seqs, args.structure, engine=eng, names=args.names, title=args.title)
+    ax = draw_complex(
+        seqs, args.structure, engine=eng, names=args.names, title=args.title,
+        minimal=args.minimal, ribbon_width=args.ribbon_width,
+    )
     return _savefig(ax, args)
 
 
@@ -231,6 +234,18 @@ def cmd_draw_reaction(args) -> int:
     fig = draw_cascade(bridge, engine=eng, show_rates=args.rates,
                        title=args.title or "Reaction cascade")
     return _savefig(fig, args)
+
+
+def cmd_draw_landscape(args) -> int:
+    eng = _draw_engine(args)
+    from strider.bridge.mantis_bridge import CHABridge
+    from strider.viz.reaction import draw_assembly_landscape
+    with open(args.spec) as f:
+        sequences = json.load(f)
+    bridge = CHABridge(sequences=sequences, engine=eng)
+    ax_e, _ = draw_assembly_landscape(
+        bridge, engine=eng, title=args.title or "Thermodynamic driving force")
+    return _savefig(ax_e, args)
 
 
 # ─── argparse wiring ─────────────────────────────────────────────────────────
@@ -351,6 +366,11 @@ def _add_draw_subparser(sub) -> None:
     pc.add_argument("sequences", nargs="+", help="two or more strand sequences")
     pc.add_argument("--names", nargs="+", default=None, help="per-strand labels")
     pc.add_argument("--structure", default=None, help="dot-bracket (folded if omitted)")
+    pc.add_argument("--minimal", action="store_true",
+                    help="thumbnail mode: plain per-strand ribbons + ID labels only "
+                         "(no base balls/letters/numbers), for small-size insets")
+    pc.add_argument("--ribbon-width", type=float, default=0.6,
+                    help="ribbon width (data units) for --minimal (default 0.6)")
     _add_thermo_args(pc)
     _add_fig_args(pc)
     pc.set_defaults(func=cmd_draw_complex)
@@ -381,6 +401,15 @@ def _add_draw_subparser(sub) -> None:
     _add_thermo_args(pr)
     _add_fig_args(pr)
     pr.set_defaults(func=cmd_draw_reaction)
+
+    # draw landscape
+    pl = draw_sub.add_parser(
+        "landscape",
+        help="CHA free-energy staircase + assembled-complex column from a JSON spec")
+    pl.add_argument("--spec", required=True, help="JSON spec {mirna,H1,H2,CP}")
+    _add_thermo_args(pl)
+    _add_fig_args(pl)
+    pl.set_defaults(func=cmd_draw_landscape)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

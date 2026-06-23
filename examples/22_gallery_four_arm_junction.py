@@ -118,6 +118,7 @@ for idx in range(n_sub):
     row, col = divmod(idx, 2)
     left = bbox.x0 + col * (bbox.width / 2) + 0.01
     bottom = bbox.y0 + (1 - row) * (bbox.height / 2) - 0.02
+    # pyrefly: ignore [no-matching-overload]
     ax_sub = fig.add_axes([left, bottom, sub_w, sub_h])
     ss_db, ss_en, ss_pairs = subs[idx]
     joined_seq = "&".join(strands)
