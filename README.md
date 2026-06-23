@@ -12,9 +12,8 @@
 <a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-646%20passed-brightgreen" alt="Tests"></a>
 <a href="#installation"><img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python"></a>
 <a href="#license"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License: MIT"></a>
-<!-- Zenodo DOI: add once a release is archived, e.g.
-<a href="https://doi.org/10.5281/zenodo.XXXXXXX"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg" alt="DOI"></a>
-     bioRxiv badge: add once the preprint is posted. -->
+<a href="https://doi.org/10.5281/zenodo.20805277"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20805277.svg" alt="DOI"></a>
+<!-- bioRxiv badge: add once the preprint is posted. -->
 </p>
 
 <!-- Original badges, superseded by the centered block above:
