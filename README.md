@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="paper/figures/fig0_overview.png" alt="strider architecture: a differentiable learn / forward-model / design pipeline spanning thermodynamics, kinetics, reaction networks, visualization, and closed-loop sequence design" width="1000">
+  <img src="examples/fig0_overview.png" alt="strider architecture: a differentiable learn / forward-model / design pipeline spanning thermodynamics, kinetics, reaction networks, visualization, and closed-loop sequence design" width="1000">
 </p>
 
 **Fold a hairpin, design a toehold gate, derive its reaction network, and simulate the circuit, all in pure Python, with no NUPACK or ViennaRNA install.** strider computes nearest-neighbor free energies, Zuker/McCaskill secondary structures, multi-strand tube equilibria, and toehold-mediated strand-displacement kinetics, then hands the rates straight to a companion **mantis** reaction network for ODE or Gillespie simulation. Every parameter is sourced from primary literature (SantaLucia 2004, Turner/Mathews 2004), every result is auditable, and the whole thermodynamic stack is differentiable for gradient-based design. MIT-licensed, with zero external thermodynamic dependencies.
