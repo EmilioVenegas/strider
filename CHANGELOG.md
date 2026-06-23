@@ -5,6 +5,18 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [1.1.0] - 2026-06-23
+
+### Documentation
+
+- Readme showcasing strider
+- Update architecture diagram path and add overview image to repository
+
+### Features
+
+- Add draw_assembly_landscape for visualizing reaction pathways and thermodynamic energy staircases
+- Add minimal mode to 2D structure visualization for thumbnail rendering
+
 ## [1.0.0] - 2026-06-20
 
 ### Documentation
