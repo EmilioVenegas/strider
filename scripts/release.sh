@@ -36,6 +36,17 @@ read -rp "Regenerate changelog, commit, and tag $NEXT? [y/N] " ok
 # --bump makes git-cliff label the unreleased section with the computed version.
 uvx git-cliff --bump -o CHANGELOG.md
 git add CHANGELOG.md
+
+# Keep CITATION.cff in lockstep with the release so the GitHub "Cite this
+# repository" widget and any Zenodo archive report the right version/date.
+# Tags are vX.Y.Z; CFF wants a bare X.Y.Z, so strip the leading "v".
+if [ -f CITATION.cff ]; then
+  CFF_VERSION="${NEXT#v}"
+  sed -i -E "s/^version: .*/version: ${CFF_VERSION}/" CITATION.cff
+  sed -i -E "s/^date-released: .*/date-released: $(date +%F)/" CITATION.cff
+  git add CITATION.cff
+fi
+
 git commit -m "chore(release): $NEXT"
 git tag "$NEXT"
 

@@ -16,7 +16,7 @@ authors:
 license: MIT
 repository-code: "https://github.com/EmilioVenegas/strider"
 url: "https://github.com/EmilioVenegas/strider"
-version: 0.6.0
+version: 1.0.0
 date-released: 2026-06-16
 keywords:
   - nucleic-acid thermodynamics
