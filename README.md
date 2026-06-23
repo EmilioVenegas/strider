@@ -4,13 +4,17 @@
 </p>
 
 <h1 align="center">strider-dna</h1>
-<p align="center"><em>Nucleic Acid Thermodynamics, Kinetics, and Circuit Design</em></p>
+<p align="center"><em>Nucleic-acid thermodynamics, kinetics &amp; circuit design, pure Python, zero NUPACK/Vienna dependency, MIT.</em></p>
 
 <p align="center">
 <a href="https://pypi.org/project/strider-dna/"><img src="https://img.shields.io/pypi/v/strider-dna" alt="PyPI"></a>
+<a href="https://pypi.org/project/strider-dna/"><img src="https://img.shields.io/pypi/dm/strider-dna" alt="PyPI downloads"></a>
 <a href="#running-the-tests"><img src="https://img.shields.io/badge/tests-646%20passed-brightgreen" alt="Tests"></a>
 <a href="#installation"><img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python"></a>
 <a href="#license"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License: MIT"></a>
+<!-- Zenodo DOI: add once a release is archived, e.g.
+<a href="https://doi.org/10.5281/zenodo.XXXXXXX"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg" alt="DOI"></a>
+     bioRxiv badge: add once the preprint is posted. -->
 </p>
 
 <!-- Original badges, superseded by the centered block above:
@@ -19,11 +23,61 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](#license)
 -->
 
-**strider** is a Python library for computing the thermodynamics and kinetics of DNA/RNA circuits. Given a set of strand sequences, it predicts free energies via nearest-neighbor parameters, folds secondary structures via dynamic programming, derives TMSD rate constants from the Zhang & Winfree (2009) empirical model, enumerates spurious leakage pathways, and produces kinetic rate dictionaries that drop directly into a mantis-delta `CRNetwork`. The full pipeline — sequence → thermodynamics → kinetics → reaction network → steady states / stochastic trajectories / bifurcation — runs end-to-end with **zero external thermodynamic dependencies** under an MIT license.
+<p align="center">
+<b>The only nucleic-acid library that bundles multi-strand equilibrium, TMSD kinetics, <em>and</em> gradient-based sequence design in one pure-Python, dependency-free, MIT package</b>, where NUPACK and ViennaRNA give you thermodynamics alone, behind a C/C++ install and a non-OSI license.
+</p>
 
-strider ships a two-backend thermodynamic engine that automatically selects the best available calculator: its own Zuker / McCaskill O(n³) DP (always available, MIT, sourced from SantaLucia 2004 + Mathews 1999 / Turner 2004 primary tables) or the ViennaRNA C library (optional, recommended for long sequences). The same API surface works with both — only `ThermoEngine(backend=…)` changes. Nearest-neighbor parameters live in a swappable `ParameterSet` that loads from Turner-style JSON files (built-in "native" set always available; user-supplied JSON discoverable via `$STRIDER_PARAMS_DIR`).
+<p align="center">
+  <img src="paper/figures/fig0_overview.png" alt="strider architecture: a differentiable learn / forward-model / design pipeline spanning thermodynamics, kinetics, reaction networks, visualization, and closed-loop sequence design" width="1000">
+</p>
 
-Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for multi-strand equilibrium analysis (concentrations, free energies, lazy pair-probability matrices, ensemble defect — see [§7](#7-multi-strand-tube-analysis)), a **circuit catalog** of ready-made DSD templates (CHA, HCR, seesaw gates, translators) wrapped around a generic verification framework, a **pure-thermo concentration solver** matching standard Newton-on-chemical-potentials (Dirks et al. 2007) to numerical precision, **Boltzmann sampling** and **suboptimal-structure enumeration** on top of the partition function, an **`Assay` / `AssayPanel`** design abstraction for ensemble-defect minimization (built on top of the unified `Complex` primitive) plus a **defect-weighted, parallel-tempered sequence designer** with leaf decomposition and equilibrium-weighted objectives (see [§8](#8-sequence-design-and-the-assay-abstraction)), a lightweight **`DSDCompiler`** for domain-level sequence assembly plus a **`DomainReactionEnumerator`** that *derives* a circuit's reaction network from strand topology (Peppercorn-style: bind / branch-migration / open → detailed-balance rates → CRN), and — via the companion **mantis** library — Gillespie SSA stochastic simulation in addition to deterministic ODE integration.
+**Fold a hairpin, design a toehold gate, derive its reaction network, and simulate the circuit, all in pure Python, with no NUPACK or ViennaRNA install.** strider computes nearest-neighbor free energies, Zuker/McCaskill secondary structures, multi-strand tube equilibria, and toehold-mediated strand-displacement kinetics, then hands the rates straight to a companion **mantis** reaction network for ODE or Gillespie simulation. Every parameter is sourced from primary literature (SantaLucia 2004, Turner/Mathews 2004), every result is auditable, and the whole thermodynamic stack is differentiable for gradient-based design. MIT-licensed, with zero external thermodynamic dependencies.
+
+### Why strider?
+
+| | **strider** | ViennaRNA | NUPACK | RNAstructure |
+|---|:---:|:---:|:---:|:---:|
+| License | **MIT (OSI)** | own, non-OSI | non-commercial¹ | academic |
+| Pure-Python, zero thermo deps | ✅ | ❌ (C) | ❌ (C++) | ❌ (C++) |
+| Multi-strand tube equilibria | ✅ | ✅ (cofold) | ✅ | two-strand |
+| TMSD kinetics + CRN derivation | ✅ | ❌ | ❌ | ❌ |
+| Differentiable (autodiff) design | ✅ | ❌ | ❌² | ❌ |
+| Na⁺ × Mg²⁺ × T salt model | ✅ | Na⁺ only | Na⁺ only | Na⁺ only |
+
+<sub>¹ NUPACK requires registration and a non-commercial license. ² NUPACK ships sequence design, but via mutation/sampling rather than gradient-based autodiff. The table reflects each tool's core distribution. strider trades raw speed for openness: it is ~970× slower than NUPACK's C kernel on single-sequence folds and carries a ~0.9 kcal/mol offset vs NUPACK on absolute RNA ΔG, see [Known limitations](#known-limitations).</sub>
+
+### 30-second quickstart
+
+```bash
+pip install strider-dna        # native backend included, no NUPACK/Vienna needed
+```
+
+```python
+from strider import ThermoEngine, draw_structure
+import matplotlib.pyplot as plt
+
+engine = ThermoEngine(material='dna', celsius=37, sodium=0.137, magnesium=0.01)
+
+# Fold a hairpin → MFE structure + free energy
+seq = 'GGGAAACCCAAAGGGAAACCC'
+fold = engine.mfe(seq)
+print(fold.structure)                        # (((...(((...)))...)))
+print(f'ΔG = {fold.energy:.2f} kcal/mol')    # ΔG = -0.95 kcal/mol
+
+# Draw it, native 2D layout, no external viz dependency
+draw_structure(seq, fold.structure)
+plt.savefig('hairpin.png', dpi=150)
+```
+
+From `pip install` to a drawn structure on a clean machine. Keep reading for multi-strand tubes, TMSD kinetics, circuit templates, and differentiable design.
+
+---
+
+**strider** is a Python library for computing the thermodynamics and kinetics of DNA/RNA circuits. Given a set of strand sequences, it predicts free energies via nearest-neighbor parameters, folds secondary structures via dynamic programming, derives TMSD rate constants from the Zhang & Winfree (2009) empirical model, enumerates spurious leakage pathways, and produces kinetic rate dictionaries that drop directly into a mantis-delta `CRNetwork`. The full pipeline, sequence → thermodynamics → kinetics → reaction network → steady states / stochastic trajectories / bifurcation, runs end-to-end with **zero external thermodynamic dependencies** under an MIT license.
+
+strider ships a two-backend thermodynamic engine that automatically selects the best available calculator: its own Zuker / McCaskill O(n³) DP (always available, MIT, sourced from SantaLucia 2004 + Mathews 1999 / Turner 2004 primary tables) or the ViennaRNA C library (optional, recommended for long sequences). The same API surface works with both; only `ThermoEngine(backend=…)` changes. Nearest-neighbor parameters live in a swappable `ParameterSet` that loads from Turner-style JSON files (built-in "native" set always available; user-supplied JSON discoverable via `$STRIDER_PARAMS_DIR`).
+
+Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for multi-strand equilibrium analysis (concentrations, free energies, lazy pair-probability matrices, ensemble defect, see [§7](#7-multi-strand-tube-analysis)), a **circuit catalog** of ready-made DSD templates (CHA, HCR, seesaw gates, translators) wrapped around a generic verification framework, a **pure-thermo concentration solver** matching standard Newton-on-chemical-potentials (Dirks et al. 2007) to numerical precision, **Boltzmann sampling** and **suboptimal-structure enumeration** on top of the partition function, an **`Assay` / `AssayPanel`** design abstraction for ensemble-defect minimization (built on top of the unified `Complex` primitive) plus a **defect-weighted, parallel-tempered sequence designer** with leaf decomposition and equilibrium-weighted objectives (see [§8](#8-sequence-design-and-the-assay-abstraction)), a lightweight **`DSDCompiler`** for domain-level sequence assembly plus a **`DomainReactionEnumerator`** that *derives* a circuit's reaction network from strand topology (Peppercorn-style: bind / branch-migration / open → detailed-balance rates → CRN), and, via the companion **mantis** library, Gillespie SSA stochastic simulation in addition to deterministic ODE integration.
 
 ---
 
@@ -45,7 +99,7 @@ Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for mult
    - [Mutation sensitivity analysis](#9-mutation-sensitivity-analysis)
    - [Off-target screening](#10-off-target-screening)
    - [Circuit catalog and the mantis bridge](#11-circuit-catalog-and-the-mantis-bridge)
-   - [DSDCompiler — domain-level circuit assembly](#12-dsdcompiler--domain-level-circuit-assembly)
+   - [DSDCompiler, domain-level circuit assembly](#12-dsdcompiler--domain-level-circuit-assembly)
    - [Stochastic simulation via mantis](#13-stochastic-simulation-via-mantis)
    - [Parameter sweeps and caching](#14-parameter-sweeps-and-caching)
    - [Parameter sets and custom NN tables](#15-parameter-sets-and-custom-nn-tables)
@@ -53,7 +107,7 @@ Beyond thermodynamics, strider provides a **`Tube` / `ComplexSet` API** for mult
    - [Export formats](#17-export-formats)
    - [Surface transducer, LOD, and surface ΔG](#18-surface-transducer-lod-and-surface-δg)
    - [G-quadruplex / aptamer folding](#19-g-quadruplex--aptamer-folding)
-   - [Low-copy stochastic capture — shot-noise-limited LOD](#20-low-copy-stochastic-capture--shot-noise-limited-lod)
+   - [Low-copy stochastic capture, shot-noise-limited LOD](#20-low-copy-stochastic-capture--shot-noise-limited-lod)
    - [Visualization](#21-visualization)
 6. [API reference](#api-reference)
 7. [Examples](#examples)
@@ -87,18 +141,18 @@ pip install strider-dna[vienna]   # ViennaRNA backend (recommended for long sequ
 pip install strider-dna[mantis]   # mantis-delta integration (circuit templates, CRNetwork)
 pip install strider-dna[pandas]   # SweepResult.to_dataframe()
 pip install strider-dna[parallel] # ProcessPoolExecutor sweeps
-pip install strider-dna[diff]     # PyTorch — gradient-based differentiable design
+pip install strider-dna[diff]     # PyTorch, gradient-based differentiable design
 pip install strider-dna[viz]      # visualization (matplotlib ≥ 3.6)
 pip install strider-dna[full]     # all of the above
 ```
 
 **Requirements:** Python ≥ 3.10, NumPy ≥ 1.24, SciPy ≥ 1.10, Matplotlib ≥ 3.6.
-PyTorch is **not** required for the core library — it is pulled in only by the `[diff]`
+PyTorch is **not** required for the core library; it is pulled in only by the `[diff]`
 (or `[full]`) extra, for the differentiable design API.
 
 > **PyTorch is optional.** Importing `strider` and using the full thermodynamics, design,
 > tube, and circuit APIs works **without** PyTorch installed. Only the differentiable
-> components — `DifferentiableDesigner` and `DiffObjective` — need it. They are imported
+> components, `DifferentiableDesigner` and `DiffObjective`, need it. They are imported
 > lazily, so `import strider` never fails on a missing torch; accessing them without it
 > raises a clear hint to `pip install 'strider-dna[diff]'`. See
 > [§16 Differentiable thermodynamics (PyTorch)](#16-differentiable-thermodynamics-pytorch).
@@ -125,7 +179,7 @@ Concrete benchmark numbers, reproducible with `python scripts/bench_accuracy.py`
 |---|---|---|
 | 11 canonical hairpins (Cheong 1990, Heus 1991, Antao 1991, Mathews 1999, SantaLucia 2004, Lu 2006) | published dot-brackets | mean **F-measure 0.99**, **10/11 exact match** |
 | `toehold_kf`, 0–12 nt | Zhang & Winfree 2009 Fig. 4 | **0 % relative error** |
-| MFE wall-clock | — | 20 nt ≈ 1.6 ms, 50 nt ≈ 35 ms, 100 nt ≈ 590 ms (single-thread pure Python) |
+| MFE wall-clock |, | 20 nt ≈ 1.6 ms, 50 nt ≈ 35 ms, 100 nt ≈ 590 ms (single-thread pure Python) |
 
 The mean-F threshold is CI-enforced by `tests/test_benchmarks.py`, so accuracy regressions show up as a red test rather than as a missed claim.
 
@@ -149,7 +203,7 @@ A mechanism in which a short single-stranded overhang (the *toehold*) on a targe
 
 ### Kinetic stability and the sweet spot
 
-Hairpin kinetics for CHA have a "sweet spot": stems stable enough to suppress leakage (ΔG ≲ −6 kcal/mol) but not so stable that the toehold is buried (ΔG ≳ −12 kcal/mol). The `CHA` circuit template's `verify()` method checks this and several other design criteria via the generic `CheckRegistry` framework — easy to extend with custom checks for non-CHA topologies (`HCR`, `SeesawGate`, etc.).
+Hairpin kinetics for CHA have a "sweet spot": stems stable enough to suppress leakage (ΔG ≲ −6 kcal/mol) but not so stable that the toehold is buried (ΔG ≳ −12 kcal/mol). The `CHA` circuit template's `verify()` method checks this and several other design criteria via the generic `CheckRegistry` framework, easy to extend with custom checks for non-CHA topologies (`HCR`, `SeesawGate`, etc.).
 
 ---
 
@@ -240,7 +294,7 @@ $ strider cotx GGGAAACCCAAAGGG --min-length 5 --material rna
 $ strider verify cha_spec.json
 ```
 
-### `strider draw` — visualization
+### `strider draw`, visualization
 
 ```bash
 # 2D secondary structure (folds automatically; --structure for explicit dot-bracket)
@@ -258,6 +312,9 @@ $ strider draw arc GCGCAAAAGCGC --color-by probability --min-prob 0.05 -o arc.pn
 
 # CHA reaction cascade from a JSON spec
 $ strider draw reaction --spec cha_spec.json --rates -o cascade.png
+
+# CHA free-energy staircase + assembled-complex column from a JSON spec
+$ strider draw landscape --spec cha_spec.json -o landscape.png
 ```
 
 All `draw` subcommands accept `--out` (required), `--dpi`, `--title`, and the standard thermo flags (`--celsius`, `--material`, etc.). The output format (PNG, SVG, PDF) is inferred from the file extension.
@@ -275,7 +332,7 @@ All commands accept `--celsius`, `--material {dna,rna}`, `--sodium`, `--magnesiu
 ```python
 from strider import ThermoEngine
 
-# Default is the native engine — strider's own, dependency-free, authoritative.
+# Default is the native engine, strider's own, dependency-free, authoritative.
 # 'auto' resolves to 'native' (it is never silently replaced by an external lib).
 engine = ThermoEngine(material='dna', celsius=37, sodium=0.137, magnesium=0.01)
 
@@ -309,7 +366,7 @@ print(cache.stats())  # {'hits': 1, 'misses': 0, 'hit_rate': 1.0, 'entries': 1, 
 
 #### ML correction hook
 
-`correction_model` accepts any callable `(sequence: str) → float` that returns a ΔΔG correction (kcal/mol). This is added to every `pfunc()` result — useful for plugging in an empirically calibrated neural-network correction on top of the NN model:
+`correction_model` accepts any callable `(sequence: str) → float` that returns a ΔΔG correction (kcal/mol). This is added to every `pfunc()` result, useful for plugging in an empirically calibrated neural-network correction on top of the NN model:
 
 ```python
 my_model = lambda seq: -0.02 * seq.count('G')   # trivial example
@@ -352,7 +409,7 @@ print(f"Pair probability matrix shape: {result.pair_probs.shape}")   # (9, 9)
 
 #### Hairpin melting temperature
 
-A hairpin melts unimolecularly (folded ⇌ open), so its Tm is concentration-independent and is the temperature at which the folding free energy vanishes, `Tm = ΔH / ΔS`. strider derives **both the ΔG and the Tm from the same engine**: the Tm reuses the folding model's own ΔG₃₇ together with the SantaLucia stack enthalpies (the folding `STACK` table and the `DNA_NN` ΔH/ΔS agree to ≤0.015 kcal/mol — two views of the same SantaLucia 2004 set), so `ΔG(Tm) = 0` by construction. There is no separate duplex-Tm path that can drift away from the reported folding ΔG.
+A hairpin melts unimolecularly (folded ⇌ open), so its Tm is concentration-independent and is the temperature at which the folding free energy vanishes, `Tm = ΔH / ΔS`. strider derives **both the ΔG and the Tm from the same engine**: the Tm reuses the folding model's own ΔG₃₇ together with the SantaLucia stack enthalpies (the folding `STACK` table and the `DNA_NN` ΔH/ΔS agree to ≤0.015 kcal/mol, two views of the same SantaLucia 2004 set), so `ΔG(Tm) = 0` by construction. There is no separate duplex-Tm path that can drift away from the reported folding ΔG.
 
 ```python
 from strider import hairpin_tm, hairpin_thermo, fraction_folded
@@ -369,11 +426,11 @@ print(f"ΔH = {th.dH:.1f}  ΔS = {th.dS:.1f}  ΔG₃₇ = {th.dG37:+.2f}")
 print(f"folded fraction @37 °C = {fraction_folded(seq, 37, 0.05, 0.010):.2f}")
 ```
 
-> Two-state, single-hairpin only (bulges/multiloops raise `ValueError` — use `pfunc` for those). A hairpin Tm is hypersensitive to the ΔH/ΔS bookkeeping (a ~few-percent shift moves Tm by tens of °C), so treat the absolute value as calibratable against experiment rather than exact.
+> Two-state, single-hairpin only (bulges/multiloops raise `ValueError`, use `pfunc` for those). A hairpin Tm is hypersensitive to the ΔH/ΔS bookkeeping (a ~few-percent shift moves Tm by tens of °C), so treat the absolute value as calibratable against experiment rather than exact.
 
 ##### Mg²⁺ / salt model (Tan-Chen)
 
-The hairpin Tm folds the salt dependence into the closed-state ΔG₃₇ before ΔS is derived. By default (`salt_model="auto"`) stems ≥ 6 bp use the **tightly-bound-ion (TBI) model of Tan & Chen (2007)**, which — unlike the per-base-pair correction used by the partition-function DP — is a *whole-helix* quantity that needs the stem length *N*. The mean electrostatic folding free energy per base stack is
+The hairpin Tm folds the salt dependence into the closed-state ΔG₃₇ before ΔS is derived. By default (`salt_model="auto"`) stems ≥ 6 bp use the **tightly-bound-ion (TBI) model of Tan & Chen (2007)**, which, unlike the per-base-pair correction used by the partition-function DP, is a *whole-helix* quantity that needs the stem length *N*. The mean electrostatic folding free energy per base stack is
 
 ```
 Δg₁ = a₁ + b₁/N        (Na⁺)        a₁ = −0.07·ln[Na⁺] + 0.012·ln²[Na⁺],  b₁ = 0.013·ln²[Na⁺]
@@ -408,8 +465,8 @@ On the monovalent (Na⁺) axis all three agree within ~3 °C (e.g. ΔTm ≈ −1
 #### Salt and temperature in the folding engine
 
 The `sodium`, `magnesium`, and `celsius` you pass to `ThermoEngine` now propagate
-through the **whole native folding path** — MFE, the partition function, and the
-two-state duplex — not just the hairpin Tm. Both knobs are off by default at the
+through the **whole native folding path**: MFE, the partition function, and the
+two-state duplex, not just the hairpin Tm. Both knobs are off by default at the
 1 M Na⁺ / 0 Mg²⁺ / 37 °C reference, where results are **bit-identical** to the
 unsalted, ΔG₃₇ engine.
 
@@ -443,7 +500,7 @@ Provenance and scope of the temperature extrapolation:
   SantaLucia 2004 / UNAFold `.dh` tables; loop-*initiation* ΔH is genuinely 0
   (purely entropic, the UNAFold convention), so loop penalties scale as `T/T_ref`.
 - **RNA** loop-initiation ΔH is curated from Turner 2004 (ViennaRNA
-  `rna_turner2004.par`) — and unlike DNA it is **non-zero** (hairpin
+  `rna_turner2004.par`), and unlike DNA it is **non-zero** (hairpin
   1.3/4.8/−2.9…, bulge 10.6/7.1…, interior −7.2/−1.3 kcal/mol). The generator
   validates each loop-size ΔG against strider's own tables before grafting the
   ΔH, so the two stay on the same model.
@@ -454,16 +511,16 @@ Provenance and scope of the temperature extrapolation:
   parameter set with curated ΔH (Schroeder & Turner 2000). Both reduce to the
   37 °C value exactly.
 - **Salt** is temperature-resolved too: the per-bp correction is entropic
-  (counterion release), so `ΔG_salt(T) = ΔG_salt(37 °C)·T/T_ref` — the same
+  (counterion release), so `ΔG_salt(T) = ΔG_salt(37 °C)·T/T_ref`, the same
   `ΔH = 0` law as DNA loop initiation (see *Salt corrections* below).
 - **Still `ΔH = ΔG₃₇`** (small, no curated enthalpy): the exact small-interior-loop
   tables (`interior_1_1/1_2/2_2`), terminal penalty, coaxial stacking, multiloop,
-  and asymmetry terms — temperature-independent until enthalpies are added.
+  and asymmetry terms, temperature-independent until enthalpies are added.
 
 > The hairpin Tm path above uses the whole-helix Tan-Chen salt model; the folding
 > engine here uses the per-base-pair `dg_per_bp_salt` (the quantity the McCaskill
 > DP can apply pair-by-pair). They are two correct corrections for two different
-> calculations — see *Background → Salt corrections*.
+> calculations, see *Background → Salt corrections*.
 
 #### Reaction ΔΔG
 
@@ -483,7 +540,7 @@ print(f"ΔΔG(R1) = {ddg_r1:.2f} kcal/mol")  # e.g. -8.5 kcal/mol
 
 #### Toehold accessibility
 
-The fraction of the ensemble in which all toehold positions are simultaneously unpaired — a direct measure of how accessible the toehold is for incoming strand binding:
+The fraction of the ensemble in which all toehold positions are simultaneously unpaired, a direct measure of how accessible the toehold is for incoming strand binding:
 
 ```python
 # Check accessibility of the first 6 nt (the toehold) of H1
@@ -495,10 +552,10 @@ print(f"Toehold accessible in {prob:.1%} of ensemble")
 
 Salt corrections for non-1M NaCl and Mg²⁺ are applied automatically when `sodium ≠ 1.0` or `magnesium > 0`. Two distinct corrections are wired in:
 
-- **Duplex / melting temperature** — Owczarzy et al. (2004) for Na⁺ and Owczarzy et al. (2008) for Mg²⁺, with a mixed-ion regime from the √[Mg²⁺]/[Na⁺] ratio.
-- **Partition function / ensemble ΔG** — per-base-pair correction ``ΔG_per_bp(T) = c·ln([Na⁺] + 3.4·√[Mg²⁺])·T/T_ref`` kcal/mol, applied to each closed pair inside the McCaskill DP so it is automatically ensemble-weighted by the pair probability. ``c`` is an Owczarzy-style empirical fit (Owczarzy 2004/2008; Na⁺ ∈ [0.05, 1.0] M, Mg²⁺ ∈ [0, 0.1] M, ±0.005 kcal/mol/bp): **−0.114 for DNA, ×1.06 for RNA** (the Tan & Chen 2007 RNA/DNA per-stack ratio — RNA's tighter A-form helix gives ~6 % stronger counterion release). The dependence is entropic (counterion release, ΔH_salt ≈ 0), so it scales with absolute temperature. See `strider.thermo.salt.dg_per_bp_salt`.
+- **Duplex / melting temperature**, Owczarzy et al. (2004) for Na⁺ and Owczarzy et al. (2008) for Mg²⁺, with a mixed-ion regime from the √[Mg²⁺]/[Na⁺] ratio.
+- **Partition function / ensemble ΔG**, per-base-pair correction ``ΔG_per_bp(T) = c·ln([Na⁺] + 3.4·√[Mg²⁺])·T/T_ref`` kcal/mol, applied to each closed pair inside the McCaskill DP so it is automatically ensemble-weighted by the pair probability. ``c`` is an Owczarzy-style empirical fit (Owczarzy 2004/2008; Na⁺ ∈ [0.05, 1.0] M, Mg²⁺ ∈ [0, 0.1] M, ±0.005 kcal/mol/bp): **−0.114 for DNA, ×1.06 for RNA** (the Tan & Chen 2007 RNA/DNA per-stack ratio, RNA's tighter A-form helix gives ~6 % stronger counterion release). The dependence is entropic (counterion release, ΔH_salt ≈ 0), so it scales with absolute temperature. See `strider.thermo.salt.dg_per_bp_salt`.
 
-The two formulas serve different purposes (Tm uses the original Owczarzy Tm-shift form; pfunc needs a per-pair ΔG that integrates over the structural ensemble). Both reduce to zero at 1 M Na⁺ / 0 Mg²⁺ — the SantaLucia/Turner reference state — for every temperature.
+The two formulas serve different purposes (Tm uses the original Owczarzy Tm-shift form; pfunc needs a per-pair ΔG that integrates over the structural ensemble). Both reduce to zero at 1 M Na⁺ / 0 Mg²⁺, the SantaLucia/Turner reference state, for every temperature.
 
 #### Chemical modifications (LNA, 2′OMe, PS)
 
@@ -560,7 +617,7 @@ for p in traj.prefixes:
     print(f'{p.length:>3}  {p.structure}  ΔG={p.energy:+.2f}')
 
 # Detect where existing pairs broke as 3' sequence arrived
-print(traj.rearrangements())   # e.g. [(9, 12)] — refold between length 9 and 12
+print(traj.rearrangements())   # e.g. [(9, 12)], refold between length 9 and 12
 print(traj.final().structure)  # fully-transcribed MFE
 ```
 
@@ -578,13 +635,13 @@ rebuilt = to_dot_bracket(pairs, 9)     # '(((...)))'
 print(validate('(((...)))'))           # True
 print(validate('(((...))'))            # False (mismatched)
 
-stems = stem_regions(structure)        # [(0, 8, 3)] — one stem of length 3
+stems = stem_regions(structure)        # [(0, 8, 3)], one stem of length 3
 unpaired = unpaired_positions(structure)  # [3, 4, 5]
 ```
 
 #### Mountain representation
 
-The mountain plot encodes the nesting depth at each position — a compact fingerprint for comparing structures:
+The mountain plot encodes the nesting depth at each position, a compact fingerprint for comparing structures:
 
 ```python
 from strider import mountain_vector, compare_structures
@@ -620,7 +677,7 @@ for db, n in counts.most_common(5):
 
 #### Suboptimal-structure enumeration
 
-Enumerate *all* structures within `gap` kcal/mol of the MFE. The enumerator is a Wuchty-style recursion over the **same nick-aware V/W/WM/WM1 matrices `fold_mfe` uses** (hairpins, internal loops/bulges, multiloops, inter-strand pairs, salt correction), so the lowest-energy structure it returns is identical to `fold_mfe` — `subopt` and `mfe` cannot drift apart:
+Enumerate *all* structures within `gap` kcal/mol of the MFE. The enumerator is a Wuchty-style recursion over the **same nick-aware V/W/WM/WM1 matrices `fold_mfe` uses** (hairpins, internal loops/bulges, multiloops, inter-strand pairs, salt correction), so the lowest-energy structure it returns is identical to `fold_mfe`; `subopt` and `mfe` cannot drift apart:
 
 ```python
 from strider import subopt_structures
@@ -642,11 +699,11 @@ for db, e, _ in subopt_structures('GCGCAATTGCGC&GCGCAATTGCGC', gap=3.0):
 # ...
 ```
 
-Via the engine, `engine.subopt(*strands)` is **order-invariant** (like `engine.mfe`, see §7): it gathers suboptimals across strand arrangements, deduplicates, and reports them in the MFE-winning strand order (pseudoknot brackets `[]`/`{}` mark pairs that cross in that order). Its energies are **`mfe`-consistent free energies** — each structure's loop energy plus the **component-aware** association penalty `(L−k)·ΔG_assoc` (where `k` is the number of connected components of *that* structure, so a suboptimal that lets a strand float free pays one fewer association) plus its coaxial-nick stabilization. Hence for a heteromeric complex `engine.subopt(*strands)[0] == engine.mfe(*strands).energy` regardless of strand order; they differ only by the complex-level rotational-symmetry term σ (a `−RT·ln σ` ensemble correction, not a per-structure energy), which is nonzero only for homomeric complexes. Because the association discount can pull a partly-dissociated structure into the window, the `gap` is applied on these corrected free energies.
+Via the engine, `engine.subopt(*strands)` is **order-invariant** (like `engine.mfe`, see §7): it gathers suboptimals across strand arrangements, deduplicates, and reports them in the MFE-winning strand order (pseudoknot brackets `[]`/`{}` mark pairs that cross in that order). Its energies are **`mfe`-consistent free energies**, each structure's loop energy plus the **component-aware** association penalty `(L−k)·ΔG_assoc` (where `k` is the number of connected components of *that* structure, so a suboptimal that lets a strand float free pays one fewer association) plus its coaxial-nick stabilization. Hence for a heteromeric complex `engine.subopt(*strands)[0] == engine.mfe(*strands).energy` regardless of strand order; they differ only by the complex-level rotational-symmetry term σ (a `−RT·ln σ` ensemble correction, not a per-structure energy), which is nonzero only for homomeric complexes. Because the association discount can pull a partly-dissociated structure into the window, the `gap` is applied on these corrected free energies.
 
 Salt (`sodium_M` / `magnesium_M`) is applied per closed base pair, so both routines track [Na⁺]/[Mg²⁺]; at the 1 M Na⁺ / 0 Mg²⁺ reference the correction is exactly zero.
 
-Both procedures are also exposed as engine methods — `engine.sample(seq, n)` and `engine.subopt(*strands, gap=…)` (which inherit the engine's salt/temperature) — for use inside design objectives.
+Both procedures are also exposed as engine methods, `engine.sample(seq, n)` and `engine.subopt(*strands, gap=…)` (which inherit the engine's salt/temperature), for use inside design objectives.
 
 ---
 
@@ -672,7 +729,7 @@ k_leak = leakage_kf(stem_stability_kcal=7.5)
 print(f"k_leak = {k_leak:.2e} M⁻¹ s⁻¹")   # ≪ kf
 ```
 
-#### TMSDKineticModel — full circuit rates
+#### TMSDKineticModel, full circuit rates
 
 `TMSDKineticModel` computes ΔΔG internally from the `ThermoEngine` and returns mantis-compatible rate dictionaries:
 
@@ -815,7 +872,7 @@ SetSpec(max_size=0, include=[                          # only explicit complexes
 
 #### Order-invariant complex folding
 
-A linear folding DP can only represent structures that are non-crossing for *one* strand concatenation, so a complex's predicted MFE would otherwise change if you merely relabel the strand order (Dirks et al. 2007). `engine.mfe(*strands)` removes this artifact: it searches strand arrangements and returns the global minimum over a structure that connects all strands — exactly for small complexes (every distinct cut is folded, within a length-scaled budget; dimers, trimers, small 4-strand), and via a sequence-affinity + crossing-minimisation heuristic for larger fused networks. The result is the same regardless of how the strands are listed:
+A linear folding DP can only represent structures that are non-crossing for *one* strand concatenation, so a complex's predicted MFE would otherwise change if you merely relabel the strand order (Dirks et al. 2007). `engine.mfe(*strands)` removes this artifact: it searches strand arrangements and returns the global minimum over a structure that connects all strands, exactly for small complexes (every distinct cut is folded, within a length-scaled budget; dimers, trimers, small 4-strand), and via a sequence-affinity + crossing-minimisation heuristic for larger fused networks. The result is the same regardless of how the strands are listed:
 
 ```python
 eng = ThermoEngine(backend="native")
@@ -829,7 +886,7 @@ print({round(eng.mfe(*p).energy, 3) for p in itertools.permutations(ring)})
 
 The winning permutation is reported as `MFEResult.strand_order` (new slot → input strand index); `structure`/`base_pairs`/`sequence` are expressed in that order, since a structure nested in the winning order may be pseudoknotted in the caller's. `engine.subopt` (§4) is order-invariant the same way.
 
-The multi-strand **complex free energy** (`engine.pfunc`, and therefore `ddg` and the tube concentrations) includes, beyond the loop energies: the σ rotational-symmetry term; the bimolecular association penalty `(L−1)·ΔG_assoc` (DNA 1.96 / RNA 4.09 kcal/mol per association, from `JOIN_PENALTY` — the same term NUPACK puts in its complex free energy); and a coaxial-stacking correction at flush strand nicks. Single-strand folding matches NUPACK to ≈0.05 kcal/mol; for multi-strand complexes a residual ensemble-breadth gap remains (NUPACK's dangle/coaxial ensemble stabilises partial microstates more) — see [`docs/limitations.md`](docs/limitations.md).
+The multi-strand **complex free energy** (`engine.pfunc`, and therefore `ddg` and the tube concentrations) includes, beyond the loop energies: the σ rotational-symmetry term; the bimolecular association penalty `(L−1)·ΔG_assoc` (DNA 1.96 / RNA 4.09 kcal/mol per association, from `JOIN_PENALTY`, the same term NUPACK puts in its complex free energy); and a coaxial-stacking correction at flush strand nicks. Single-strand folding matches NUPACK to ≈0.05 kcal/mol; for multi-strand complexes a residual ensemble-breadth gap remains (NUPACK's dangle/coaxial ensemble stabilises partial microstates more), see [`docs/limitations.md`](docs/limitations.md).
 
 #### Low-level solver
 
@@ -853,7 +910,7 @@ print(res.concentrations)              # {'A': 6.0e-8, 'B': 6.0e-8, 'AB': 4.0e-8
 
 If your input ΔG comes from a tool using a non-1 M reference state (e.g. water-molarity at ~55 M), pass `standard_state_M=water_molarity(celsius)` so the solver applies the corresponding (N − 1)·RT·ln(c₀) shift per N-strand complex.
 
-The legacy `equilibrium_from_engine(engine, strands_dict, totals, max_size=N)` is preserved as a thin wrapper over `Tube.analyze` — keep it for backward compat, prefer the `Tube` API for new code.
+The legacy `equilibrium_from_engine(engine, strands_dict, totals, max_size=N)` is preserved as a thin wrapper over `Tube.analyze`, keep it for backward compat, prefer the `Tube` API for new code.
 
 #### Rotational symmetry
 
@@ -913,8 +970,8 @@ print(result.objective_breakdown)
 | `DesignObjective.ddg_range(engine, reactants, products, min, max)` | ΔΔG outside [min, max] |
 | `DesignObjective.minimize_leakage(engine, strand_names, threshold)` | Pairwise ΔΔG below threshold |
 | `DesignObjective.toehold_accessible(engine, strand_name, positions, min_prob)` | Low toehold accessibility |
-| `DesignObjective.ensemble_defect(engine, strand_names, target_structure)` | Normalized expected mispaired nucleotides vs target dot-bracket (Zadeh 2011) — NUPACK `complex_design` |
-| `DesignObjective.multitube_defect(engine, tubes, tube_weights=None)` | Weighted sum of the **test-tube ensemble defect** (structural + concentration defect) over N tubes — NUPACK `tube_design` (1 tube) / multistate design (N tubes); see below |
+| `DesignObjective.ensemble_defect(engine, strand_names, target_structure)` | Normalized expected mispaired nucleotides vs target dot-bracket (Zadeh 2011), NUPACK `complex_design` |
+| `DesignObjective.multitube_defect(engine, tubes, tube_weights=None)` | Weighted sum of the **test-tube ensemble defect** (structural + concentration defect) over N tubes, NUPACK `tube_design` (1 tube) / multistate design (N tubes); see below |
 | `DesignObjective.gc_content(strand_name, target_gc)` | (GC − target)² |
 | `DesignObjective.from_callable(fn)` | Any Python callable returning a float |
 
@@ -925,7 +982,7 @@ C_tube = ( Σ_h c_h·ñ(h, s_h)  +  Σ_h |h|·max(0, c_h* − c_h) ) / ( Σ_h |h
           └── structural defect ──┘   └── concentration defect ──┘
 ```
 
-The **structural** term is each on-target complex's equilibrium concentration `c_h` times its *unnormalized* ensemble defect; the **concentration** term penalizes on-target material that failed to form at its target concentration `c_h*` because the strands were sequestered in off-targets. Off-targets need no explicit list or ΔΔG threshold — they are simply every non-on-target complex in the tube, and the equilibrium solve has already distributed strands among them. The multi-tube objective is `Σ_t tube_weights[t]·C_tube(t)`, so a single tube reproduces `tube_design` and several tubes give true multistate design. A tube whose solve raises contributes `+inf` (the SA move is rejected).
+The **structural** term is each on-target complex's equilibrium concentration `c_h` times its *unnormalized* ensemble defect; the **concentration** term penalizes on-target material that failed to form at its target concentration `c_h*` because the strands were sequestered in off-targets. Off-targets need no explicit list or ΔΔG threshold; they are simply every non-on-target complex in the tube, and the equilibrium solve has already distributed strands among them. The multi-tube objective is `Σ_t tube_weights[t]·C_tube(t)`, so a single tube reproduces `tube_design` and several tubes give true multistate design. A tube whose solve raises contributes `+inf` (the SA move is rejected).
 
 **Dynamical (closed-loop) objectives.**  These factories drive optimization
 from a *kinetic* cost: each evaluation rebuilds a mantis `CRNetwork` via the
@@ -940,7 +997,7 @@ They compose with the static objectives under the same `+` / `*` protocol.
 | `DesignObjective.maximize_kcat(factory, species, ic, t_window)` | `−Δ[species]/Δt` (drives the catalytic production rate up) |
 | `DesignObjective.minimize_leak(factory, signal, ic_no_trigger, t_window, threshold)` | `(log10(leak / threshold))²` for a no-trigger control sim above threshold |
 | `DesignObjective.bistable_threshold(factory, parameter, range, species, target)` | `(log10(threshold_actual / target))²` at the bifurcation-scan crossing |
-| `DesignObjective.from_simulation(factory, ic, t_span, cost_fn)` | Escape hatch — arbitrary `cost_fn(SimulationResult) → float` |
+| `DesignObjective.from_simulation(factory, ic, t_span, cost_fn)` | Escape hatch, arbitrary `cost_fn(SimulationResult) → float` |
 
 See `examples/09_dynamical_design.py` for a complete pipeline; the spec
 behind these factories is item 1 of `outperform_nupack.md` (closed-loop
@@ -964,7 +1021,7 @@ total = 2.0 * objective_a + objective_b + 0.5 * objective_c
 | `HardConstraint.min_length(length)` | Minimum sequence length |
 | `HardConstraint.from_callable(fn)` | Any `(name, seq) → bool` |
 
-#### Assay / AssayPanel — high-level design intent
+#### Assay / AssayPanel, high-level design intent
 
 For circuit-level design, `Assay` bundles a set of on-target assemblies (each with its dot-bracket target and expected concentration) plus off-target assemblies that must *not* form. It compiles into a `DesignObjective` that the designer minimizes:
 
@@ -1000,7 +1057,7 @@ objective = panel.to_objective(engine)
 
 #### Defect-weighted mutation sampling and parallel tempering
 
-For objectives dominated by **ensemble defect** (anything compiled from an `Assay` on-target, or `DesignObjective.ensemble_defect`), uniform-random base flips waste most of their proposals on already-satisfied positions. The `DefectWeightedPolicy` biases site selection by the per-residue defect vector — positions whose target pair is poorly satisfied get flipped more often — and is the recommended default for any defect-driven task:
+For objectives dominated by **ensemble defect** (anything compiled from an `Assay` on-target, or `DesignObjective.ensemble_defect`), uniform-random base flips waste most of their proposals on already-satisfied positions. The `DefectWeightedPolicy` biases site selection by the per-residue defect vector, positions whose target pair is poorly satisfied get flipped more often, and is the recommended default for any defect-driven task:
 
 ```python
 from strider import (
@@ -1029,7 +1086,7 @@ result = designer.design(
 )
 ```
 
-**Parallel tempering** runs `n_chains` Metropolis chains in parallel on a geometric temperature ladder; every `swap_every` steps adjacent chains attempt a swap. Hot chains hop between basins; the cold chain captures the global minimum. **Early rejection** via `DomainSpec(length=L, gc_band=(0.3, 0.7))` skips out-of-band candidates before the (expensive) objective evaluation. **`HardConstraint.propose(name, seq, pos, rng, bases)`** lets the designer route base-flip generation through a constraint when one provides a proposer, instead of relying on reject-after-the-fact filtering — the `ConstraintAwarePolicy` wrapper opts into this behaviour.
+**Parallel tempering** runs `n_chains` Metropolis chains in parallel on a geometric temperature ladder; every `swap_every` steps adjacent chains attempt a swap. Hot chains hop between basins; the cold chain captures the global minimum. **Early rejection** via `DomainSpec(length=L, gc_band=(0.3, 0.7))` skips out-of-band candidates before the (expensive) objective evaluation. **`HardConstraint.propose(name, seq, pos, rng, bases)`** lets the designer route base-flip generation through a constraint when one provides a proposer, instead of relying on reject-after-the-fact filtering, the `ConstraintAwarePolicy` wrapper opts into this behaviour.
 
 #### Equilibrium-weighted Assay objective
 
@@ -1039,7 +1096,7 @@ By default `Assay.to_objective(engine)` weights each on-target defect by the use
 obj = assay.to_objective(engine, equilibrium=True)
 ```
 
-This is more expensive (one Newton solve per objective evaluation) but captures composition shifts — large off-target stability eats into the on-target weight automatically.
+This is more expensive (one Newton solve per objective evaluation) but captures composition shifts, large off-target stability eats into the on-target weight automatically.
 
 #### Leaf decomposition
 
@@ -1064,7 +1121,7 @@ python scripts/bench_design.py --iterations 2000 --trials 3
 # duplex-12       defect=0.1575  floor=0.10  iters=2000  wall=24.0s
 ```
 
-The runner exercises the canonical hairpin / duplex tasks defined in `strider.design.benchmarks`. The reported floors are the lowest defects achievable with the native McCaskill DP at each length — convergence of "≤ 2× the floor" is the realistic target on a pure-Python engine.
+The runner exercises the canonical hairpin / duplex tasks defined in `strider.design.benchmarks`. The reported floors are the lowest defects achievable with the native McCaskill DP at each length, convergence of "≤ 2× the floor" is the realistic target on a pure-Python engine.
 
 ---
 
@@ -1091,7 +1148,7 @@ print(f"Critical positions: {profile.critical_positions(threshold=2.0)}")
 profile.plot(title="H1 mutation sensitivity")
 ```
 
-`profile.max_sensitivity` gives the worst-case ΔΔG over all three possible mutations at each position — useful for identifying positions that must be preserved.
+`profile.max_sensitivity` gives the worst-case ΔΔG over all three possible mutations at each position, useful for identifying positions that must be preserved.
 
 ---
 
@@ -1141,7 +1198,7 @@ strider ships a catalog of DSD circuit templates under `strider.circuits`. All t
 from strider import CHA, HCR, SeesawGate, Translator
 ```
 
-#### CHA — Catalytic Hairpin Assembly
+#### CHA, Catalytic Hairpin Assembly
 
 ```python
 cha = CHA(
@@ -1157,7 +1214,7 @@ cha = CHA(
 )
 ```
 
-#### CHA as a *generator* — `from_target` and `design`
+#### CHA as a *generator*, `from_target` and `design`
 
 The constructor above *checks* sequences you already have. `CHA` can also **build** them from a target. `from_target` lays out the domains (the target's 3′ end is the initiation toehold D1, the adjacent block the branch-migration stem D2, plus a hairpin loop and an optional orthogonal capture handle K → CP = K\*) and assembles ready-to-`verify()` strands:
 
@@ -1171,7 +1228,7 @@ cha = CHA.from_target(
 report = cha.verify()                    # round-trips with the checker
 ```
 
-`design` goes further: it **searches** for the split, loop, and capture handle. It scans `d1_grid × d2_grid × loops`, ranks each combo by a cascade-gate penalty (R1/R2 driving force, toehold accessibility, hairpin-stability sweet-spot), then for the top `rerank_top_n` combos designs an orthogonal handle K with `SequenceDesigner` and **re-ranks on the post-capture gate** — the R2 measured *with K attached to H1*, which is what validation actually gates on, not the bare-hairpin proxy:
+`design` goes further: it **searches** for the split, loop, and capture handle. It scans `d1_grid × d2_grid × loops`, ranks each combo by a cascade-gate penalty (R1/R2 driving force, toehold accessibility, hairpin-stability sweet-spot), then for the top `rerank_top_n` combos designs an orthogonal handle K with `SequenceDesigner` and **re-ranks on the post-capture gate**, the R2 measured *with K attached to H1*, which is what validation actually gates on, not the bare-hairpin proxy:
 
 ```python
 cha = CHA.design(
@@ -1186,10 +1243,10 @@ rn = cha.to_crnetwork()                   # straight into mantis
 
 Two reusable pieces underpin `design`, both usable on their own for any circuit:
 
-- **`DesignObjective.reaction_driving_force(engine, reactants, products, max_ddg, assemble_fn=…)`** — a *coupling constraint*: penalize a reaction whose driving force drifts above a gate while the optimizer tunes a *different* domain. `assemble_fn` builds the full strands so the gate is measured on the assembled context (e.g. the handle attached to H1), not the bare domain. This is the design-time mirror of the `reaction_driving_force` *check*.
-- **`design_with_rerank(designer, contexts, build_problem, score_fn, top_n=3)`** — design the top-N pre-ranked contexts and pick the winner by a downstream `score_fn` evaluated on the *finished* design (the gate-with-downstream value), rather than trusting the pre-rank proxy.
+- **`DesignObjective.reaction_driving_force(engine, reactants, products, max_ddg, assemble_fn=…)`**, a *coupling constraint*: penalize a reaction whose driving force drifts above a gate while the optimizer tunes a *different* domain. `assemble_fn` builds the full strands so the gate is measured on the assembled context (e.g. the handle attached to H1), not the bare domain. This is the design-time mirror of the `reaction_driving_force` *check*.
+- **`design_with_rerank(designer, contexts, build_problem, score_fn, top_n=3)`**, design the top-N pre-ranked contexts and pick the winner by a downstream `score_fn` evaluated on the *finished* design (the gate-with-downstream value), rather than trusting the pre-rank proxy.
 
-#### HCR — Hybridization Chain Reaction
+#### HCR, Hybridization Chain Reaction
 
 ```python
 hcr = HCR(
@@ -1199,7 +1256,7 @@ hcr = HCR(
 )
 ```
 
-#### SeesawGate — Qian-Winfree compute primitive (YES / AND / OR / NOT)
+#### SeesawGate, Qian-Winfree compute primitive (YES / AND / OR / NOT)
 
 ```python
 gate = SeesawGate(
@@ -1213,7 +1270,7 @@ gate = SeesawGate(
 )
 ```
 
-#### Translator — input strand X triggers release of output strand Y
+#### Translator, input strand X triggers release of output strand Y
 
 ```python
 tr = Translator(
@@ -1233,14 +1290,14 @@ print(report)
 
 ```
 CHA: PASS
-  ✓ toehold_accessible: 0.996 (prob) — unpaired probability 1.00 (≥ 0.50)
-  ✓ H1_stability: -5.07 kcal/mol — normalised ΔG -5.07 kcal/mol (in [-12, -4])
-  ✓ H2_stability: -4.51 kcal/mol — normalised ΔG -4.51 kcal/mol (in [-12, -4])
-  ✓ R1_driving_force: -10.54 kcal/mol — ΔΔG -10.54 kcal/mol (≤ -3.0)
-  ✓ R2_driving_force: -12.89 kcal/mol — ΔΔG -12.89 kcal/mol (≤ -3.0)
-  ✓ R3_driving_force: -9.56 kcal/mol — ΔΔG -9.56 kcal/mol (≤ -8.0)
-  ✓ CP_leakage: -5.14 kcal/mol — ΔΔG -5.14 kcal/mol (≥ -6.0)
-  ✓ spontaneous_leakage: 1.49e-07 ratio — leak/signal = 1.49e-07 (≤ 1e-04)
+  ✓ toehold_accessible: 0.996 (prob), unpaired probability 1.00 (≥ 0.50)
+  ✓ H1_stability: -5.07 kcal/mol, normalised ΔG -5.07 kcal/mol (in [-12, -4])
+  ✓ H2_stability: -4.51 kcal/mol, normalised ΔG -4.51 kcal/mol (in [-12, -4])
+  ✓ R1_driving_force: -10.54 kcal/mol, ΔΔG -10.54 kcal/mol (≤ -3.0)
+  ✓ R2_driving_force: -12.89 kcal/mol, ΔΔG -12.89 kcal/mol (≤ -3.0)
+  ✓ R3_driving_force: -9.56 kcal/mol, ΔΔG -9.56 kcal/mol (≤ -8.0)
+  ✓ CP_leakage: -5.14 kcal/mol, ΔΔG -5.14 kcal/mol (≥ -6.0)
+  ✓ spontaneous_leakage: 1.49e-07 ratio, leak/signal = 1.49e-07 (≤ 1e-04)
 ```
 
 Build your own checks with `CheckRegistry`:
@@ -1269,7 +1326,7 @@ ss  = cha.steady_states(initial_conditions)
 
 #### Defining your own circuit
 
-Subclass `CircuitTemplate` to add a new topology — declare reactions and a default check registry, get the full pipeline for free:
+Subclass `CircuitTemplate` to add a new topology, declare reactions and a default check registry, get the full pipeline for free:
 
 ```python
 from dataclasses import dataclass
@@ -1308,9 +1365,9 @@ rn = bridge.to_crnetwork()
 
 ---
 
-### 12. DSDCompiler — domain-level circuit assembly
+### 12. DSDCompiler, domain-level circuit assembly
 
-`DSDCompiler` lets you describe a circuit in *domain space* — registered domains plus strands defined as ordered domain lists — and resolves to nucleotide sequences automatically, including reverse-complement (`a*`) generation.
+`DSDCompiler` lets you describe a circuit in *domain space*, registered domains plus strands defined as ordered domain lists, and resolves to nucleotide sequences automatically, including reverse-complement (`a*`) generation.
 
 ```python
 from strider import DSDCompiler
@@ -1329,11 +1386,11 @@ bridge = dsd.to_bridge()                          # CircuitBridge
 rn = bridge.to_crnetwork()
 ```
 
-The compiler intentionally does *not* infer reactions from strand topology — you still write them explicitly. The job is to keep the symbolic layer (domains, strands) in sync with the sequence layer.
+The compiler intentionally does *not* infer reactions from strand topology, you still write them explicitly. The job is to keep the symbolic layer (domains, strands) in sync with the sequence layer.
 
-#### Deriving the reactions automatically — `DomainReactionEnumerator`
+#### Deriving the reactions automatically, `DomainReactionEnumerator`
 
-When you *don't* want to write the reactions by hand, `DomainReactionEnumerator` does the Visual DSD / Peppercorn job: it reads the strand topology and enumerates the reachable complexes plus the transitions between them — **bind** (a complementary toehold pair, one per complex, hybridises and merges), **3-way branch migration** (an unbound domain adjacent to a junction displaces an identical incumbent), and **open** (a toehold-length helix dissociates). Forward rates come from the Zhang–Winfree model; reverse rates from **detailed balance** against the helix ΔG computed by the active `ThermoEngine` (so `Keq = kf/kr = exp(−ΔG/RT)`). The result drops straight into a `mantis.CRNetwork`.
+When you *don't* want to write the reactions by hand, `DomainReactionEnumerator` does the Visual DSD / Peppercorn job: it reads the strand topology and enumerates the reachable complexes plus the transitions between them, **bind** (a complementary toehold pair, one per complex, hybridises and merges), **3-way branch migration** (an unbound domain adjacent to a junction displaces an identical incumbent), and **open** (a toehold-length helix dissociates). Forward rates come from the Zhang–Winfree model; reverse rates from **detailed balance** against the helix ΔG computed by the active `ThermoEngine` (so `Keq = kf/kr = exp(−ΔG/RT)`). The result drops straight into a `mantis.CRNetwork`.
 
 ```python
 from strider import ThermoEngine, DomainReactionEnumerator
@@ -1350,7 +1407,7 @@ print(result.summary())          # derived complexes + reactions + rates
 crn = result.to_crnetwork()      # → mantis.CRNetwork, ready to simulate
 ```
 
-This enumerates the canonical TMSD network — *Invader* binds the *Output·Base* substrate via the toehold, branch-migrates along `b`, and releases *Output* — with no hand-written reactions. Scope (v1): non-pseudoknotted, 3-way only; 4-way migration and intramolecular hairpin re-closure are not modelled, and `max_complexes`/`max_strands` caps guarantee termination on polymerising motifs. See `examples/10_domain_enumeration.py`.
+This enumerates the canonical TMSD network, *Invader* binds the *Output·Base* substrate via the toehold, branch-migrates along `b`, and releases *Output*, with no hand-written reactions. Scope (v1): non-pseudoknotted, 3-way only; 4-way migration and intramolecular hairpin re-closure are not modelled, and `max_complexes`/`max_strands` caps guarantee termination on polymerising motifs. See `examples/10_domain_enumeration.py`.
 
 ---
 
@@ -1438,7 +1495,7 @@ with cache:             # context manager closes the connection
 
 ### 15. Parameter sets and custom NN tables
 
-Nearest-neighbor energies live in a swappable `ParameterSet` object. The built-in ``"native"`` set is assembled from published constants — SantaLucia 2004 (DNA) and Mathews 1999 / Turner 2004 (RNA) — and is always available. Additional Turner-schema JSON files dropped into ``$STRIDER_PARAMS_DIR`` or into `strider/thermo/parameters/` are auto-discovered by basename. Custom sets actually change the numerical output of `pfunc` / `mfe` / `sample` — the override is threaded through the energy DP, not just stamped on the cache key.
+Nearest-neighbor energies live in a swappable `ParameterSet` object. The built-in ``"native"`` set is assembled from published constants, SantaLucia 2004 (DNA) and Mathews 1999 / Turner 2004 (RNA), and is always available. Additional Turner-schema JSON files dropped into ``$STRIDER_PARAMS_DIR`` or into `strider/thermo/parameters/` are auto-discovered by basename. Custom sets actually change the numerical output of `pfunc` / `mfe` / `sample`, the override is threaded through the energy DP, not just stamped on the cache key.
 
 ```python
 from strider import ParameterSet, load_parameters, list_parameter_sets, ThermoEngine
@@ -1453,7 +1510,7 @@ print(p)                              # ParameterSet(name='native-dna', material
 print(p.dG['stack']['AATT'])          # -1.0  (SantaLucia 2004)
 print(p.multiloop_params())           # (a, b, c) = Turner-style linear ML coefficients
 
-# Use a specific parameter set with the engine — custom sets DO change numerics.
+# Use a specific parameter set with the engine, custom sets DO change numerics.
 engine_default  = ThermoEngine(material='dna')                                # native, fast path
 engine_lowsalt  = ThermoEngine(material='dna', parameter_set='dna-low-salt-50mM-Na')
 seq = 'GCGCAAAAGCGC'
@@ -1470,7 +1527,7 @@ python scripts/export_paramset.py --name native-dna --rebuild-native --out my-dn
 mv my-dna.json strider/thermo/parameters/   # OR set $STRIDER_PARAMS_DIR
 ```
 
-The exporter writes every sub-table, so the result is a complete self-contained set; partial JSONs (just a couple of perturbed entries) are also valid — sub-tables not present in the JSON fall back to the module-level defaults via the per-call override channel.
+The exporter writes every sub-table, so the result is a complete self-contained set; partial JSONs (just a couple of perturbed entries) are also valid; sub-tables not present in the JSON fall back to the module-level defaults via the per-call override channel.
 
 #### JSON file format (`<name>.json`):
 
@@ -1503,7 +1560,7 @@ The exporter writes every sub-table, so the result is a complete self-contained 
 }
 ```
 
-**Schema reference (Turner / Mathews convention)** — all 22 sub-tables consumed by the energy DP:
+**Schema reference (Turner / Mathews convention)**, all 22 sub-tables consumed by the energy DP:
 
 | Sub-table | Threaded into DP? | What it controls |
 |---|---|---|
@@ -1521,16 +1578,16 @@ The exporter writes every sub-table, so the result is a complete self-contained 
 | `hairpin_triloop`, `hairpin_tetraloop` | ✅ | Sequence-specific 3-/4-nt hairpin loop bonuses |
 | `coaxial_stack` | ✅ (DNA) | Walter et al. 1994 coaxial stacking |
 
-> **Note on the override gating.** Passing `parameter_set=None` (the default), `"native"`, `"native-dna"`, or `"native-rna"` keeps the DP on its fast path — no per-call override is installed, and numerical output is bit-identical to every prior release. Only explicit non-native names or `ParameterSet` instances activate the override channel.
+> **Note on the override gating.** Passing `parameter_set=None` (the default), `"native"`, `"native-dna"`, or `"native-rna"` keeps the DP on its fast path, no per-call override is installed, and numerical output is bit-identical to every prior release. Only explicit non-native names or `ParameterSet` instances activate the override channel.
 
 ---
 
 ### 16. Differentiable thermodynamics (PyTorch)
 
-> **Requires PyTorch** — everything in this section needs the optional `diff` extra:
+> **Requires PyTorch**, everything in this section needs the optional `diff` extra:
 > `pip install 'strider-dna[diff]'`. The rest of strider works without it.
 
-`strider.thermo.differentiable` provides a fully batched PyTorch McCaskill-style partition-function DP whose nearest-neighbor parameters are `nn.Parameter`s — so the same ensemble ΔG that `ThermoEngine.pfunc(...)` computes can be back-propagated through, optimized, and trained against experimental data. It doubles as a **fast batched / GPU backend**: the whole batch folds in one vectorised DP, so it runs **~9–12× faster than the pure-Python native engine** on batched workloads (and scales further on a GPU), closing most of native's speed gap to a C kernel — while remaining learnable, which a closed kernel can never be.
+`strider.thermo.differentiable` provides a fully batched PyTorch McCaskill-style partition-function DP whose nearest-neighbor parameters are `nn.Parameter`s, so the same ensemble ΔG that `ThermoEngine.pfunc(...)` computes can be back-propagated through, optimized, and trained against experimental data. It doubles as a **fast batched / GPU backend**: the whole batch folds in one vectorised DP, so it runs **~9–12× faster than the pure-Python native engine** on batched workloads (and scales further on a GPU), closing most of native's speed gap to a C kernel, while remaining learnable, which a closed kernel can never be.
 
 ```python
 import torch
@@ -1550,7 +1607,7 @@ loss   = torch.nn.functional.mse_loss(pred, target)
 loss.backward()                                            # gradients flow into every NN table
 ```
 
-The PyTorch engine implements the same Mathews-Turner conventions as the native McCaskill engine in `thermo/ensemble.py`, and now uses the **full 36-entry nearest-neighbor stack table** (all six pair types incl. GU/UG wobble, keyed by all four bases of the step) plus the **single-base-bulge stack-across term** — closing the multi-kcal residual that the old 16-entry Watson-Crick dinucleotide table produced on wobble-containing helices. The two engines now agree to ~0.3 kcal/mol mean (≤~1.0 max) on random sequences of both materials. Reproduce with `python scratch/compare_engines.py`.
+The PyTorch engine implements the same Mathews-Turner conventions as the native McCaskill engine in `thermo/ensemble.py`, and now uses the **full 36-entry nearest-neighbor stack table** (all six pair types incl. GU/UG wobble, keyed by all four bases of the step) plus the **single-base-bulge stack-across term**, closing the multi-kcal residual that the old 16-entry Watson-Crick dinucleotide table produced on wobble-containing helices. The two engines now agree to ~0.3 kcal/mol mean (≤~1.0 max) on random sequences of both materials. Reproduce with `python scratch/compare_engines.py`.
 
 | Family | mean \|res\| (diff vs native, RNA, 37 °C) | status |
 |---|---:|---|
@@ -1569,11 +1626,11 @@ Physical conventions wired identically across both engines:
 - **Multiloop initiation.** The outer closing pair charges `ML_INIT + ML_PAIR`; each inner stem charges `ML_PAIR` via the `M` / `M1` recurrences, matching `bm_ml_init_pair = boltz(ML_INIT + ML_PAIR)` in `ensemble.py`.
 - **Interior-loop / bulge universal correction.** Single-base bulges add the nearest-neighbor **stack-across-the-bulge** term plus `+TP_outer − TP_inner`; multi-base bulges and RNA general interior loops add `+2·TP_outer`; DNA interior loops add `+TP_outer − TP_inner` (the `INTERIOR_MISMATCH`-at-junctions DNA refinement is tracked as a follow-up).
 
-Training entry point is `strider/thermo/train.py`. The intended workflow is `BatchedPartitionFunction(ThermoParameters(material=...))` → torch optimizer over the parameter groups (physical tables on an aggressive LR, neural-residual MLPs on a conservative LR — see `tests/test_differentiable.py::test_toy_training_step` for the pattern).
+Training entry point is `strider/thermo/train.py`. The intended workflow is `BatchedPartitionFunction(ThermoParameters(material=...))` → torch optimizer over the parameter groups (physical tables on an aggressive LR, neural-residual MLPs on a conservative LR, see `tests/test_differentiable.py::test_toy_training_step` for the pattern).
 
 #### Gradient-based sequence design
 
-The differentiable engine is also differentiable **in the sequence**, which turns inverse design into gradient descent. The keystone is that the **base-pair-probability matrix is the gradient of the free energy** with respect to a per-pair energy bias — `∂F/∂ε_ij = P(i, j)` — so a single backward pass over a zero-valued bias field yields the whole McCaskill BPP matrix, differentiable a second time w.r.t. a *soft* sequence (a `(B, N, 4)` distribution over A/C/G/U). Every structure-level design objective is built on it.
+The differentiable engine is also differentiable **in the sequence**, which turns inverse design into gradient descent. The keystone is that the **base-pair-probability matrix is the gradient of the free energy** with respect to a per-pair energy bias, `∂F/∂ε_ij = P(i, j)`, so a single backward pass over a zero-valued bias field yields the whole McCaskill BPP matrix, differentiable a second time w.r.t. a *soft* sequence (a `(B, N, 4)` distribution over A/C/G/U). Every structure-level design objective is built on it.
 
 ```python
 from strider.thermo.differentiable import pair_probabilities, soft_pair_probabilities
@@ -1603,7 +1660,7 @@ result = designer.design(
 seq = result.sequences["hp"]              # e.g. CCACGUCAAUUGACGUGG; native MFE == target
 ```
 
-`DiffObjective` is composed exactly like `DesignObjective` (weighted sum, `+`/`*`, `evaluate_breakdown`), with factories for **ensemble defect**, **ΔG / ΔΔG targets** (`free_energy_target` / `free_energy_range`), **GC content / band**, **toehold accessibility**, **pairing entropy**, and **forbidden motifs**. `DifferentiableDesigner` optimizes per-position base logits with Adam under a temperature schedule (free positions move, `DomainSpec(sequence=…)` domains are clamped), rounds to a discrete sequence, then hands off to the existing simulated-annealing `SequenceDesigner` — warm-started via its new `initial_sequences=` argument — for a short discrete polish, returning the same `DesignResult`.
+`DiffObjective` is composed exactly like `DesignObjective` (weighted sum, `+`/`*`, `evaluate_breakdown`), with factories for **ensemble defect**, **ΔG / ΔΔG targets** (`free_energy_target` / `free_energy_range`), **GC content / band**, **toehold accessibility**, **pairing entropy**, and **forbidden motifs**. `DifferentiableDesigner` optimizes per-position base logits with Adam under a temperature schedule (free positions move, `DomainSpec(sequence=…)` domains are clamped), rounds to a discrete sequence, then hands off to the existing simulated-annealing `SequenceDesigner`, warm-started via its new `initial_sequences=` argument, for a short discrete polish, returning the same `DesignResult`.
 
 **Multi-strand complexes.** The nick-aware DP (`forward`/`soft_forward` with `nicks=`, plus `complex_free_energy` / `complex_pair_probabilities`) folds a concatenation of strands: cross-strand pairs may close at any separation, hairpins may not span a nick, and the homomeric **rotational-symmetry correction** `+RT·ln σ` is applied so the complex ΔG matches `ThermoEngine.pfunc(*strands)`. Pass `nicks=` to `DifferentiableDesigner.design` to co-design a duplex or toehold complex against its `ensemble_defect`. The differentiable BPP / defect agree with the native engine to the same ~0.3 kcal residual as the free energy (amplified into a ratio only on register-degenerate homopolymer stems); multi-strand ΔG agrees to ~0.5 kcal mean. See `examples/11_gradient_design.py` and `tests/test_diff_design.py`. The full multistate test-tube *equilibrium-concentration* design (differentiating through the concentration solve) is a tracked follow-up; single-complex defect design is supported today.
 
@@ -1633,7 +1690,7 @@ write(seq, struct, path='output.ct',  fmt='ct', energy=-2.8)
 
 ### 18. Surface transducer, LOD, and surface ΔG
 
-NUPACK assumes a well-mixed 3-D bulk and stops at static equilibrium. But almost every clinical readout — electrochemical, SPR, gold-nanoparticle — happens at a **tethered surface**, where capture is diffusion-limited, the probe layer has finite capacity, and the local salt/entropy environment warps hybridization. `strider.surface` adds that layer. It turns a solution-phase concentration trace `C(t)` (typically a mantis `SimulationResult` species) into a predicted signal and a **limit of detection**.
+NUPACK assumes a well-mixed 3-D bulk and stops at static equilibrium. But almost every clinical readout, electrochemical, SPR, gold-nanoparticle, happens at a **tethered surface**, where capture is diffusion-limited, the probe layer has finite capacity, and the local salt/entropy environment warps hybridization. `strider.surface` adds that layer. It turns a solution-phase concentration trace `C(t)` (typically a mantis `SimulationResult` species) into a predicted signal and a **limit of detection**.
 
 ```python
 from strider import SurfaceModel, SurfaceParams, PrussianBlueLabel, ReadoutChain
@@ -1690,7 +1747,7 @@ A **G-quadruplex (G4)** is something a Watson–Crick partition function *struct
 ```python
 from strider import fold_quadruplex, quadruplex_ensemble, find_g4_motifs
 
-# Putative-quadruplex-sequence (PQS) recognition — pure sequence pattern
+# Putative-quadruplex-sequence (PQS) recognition, pure sequence pattern
 find_g4_motifs("AGGGTTAGGGTTAGGGTTAGGG")    # → [G4Motif(n_tetrads=3, loops=[3,3,3], ...)]
 
 # Two-state thermodynamics with cation dependence
@@ -1702,11 +1759,11 @@ e = quadruplex_ensemble("AGGGTTAGGGTTAGGGTTAGGG", potassium=0.1)
 e.p_g4, e.p_secondary                       # population in G4 vs WC structures, sums to 1
 ```
 
-The G4 is folded into the partition function as `Z_total = Z_secondary + Σ_g exp(−ΔG_g/RT)·Z_flank(g)`, where `Z_flank(g)` is computed by forcing the tetrad guanines unpaired via the existing `blocked` constraint — so the duplex-vs-G4 competition is exact *within the model* and needs no edit to the core DP. The two-state ΔH/ΔS model has a tract-association nucleation term, a per-tetrad-stack term (more tetrads ⇒ more stable), a loop-length entropic penalty (Guédin, Gros & Mergny 2010), and a Langmuir cation term sized so a G4 is essentially unfolded without stabilizing cation and K⁺ ≫ Na⁺. Reference parameters are fit to canonical melts (c-myc Pu22, telomere 22AG, thrombin-binding aptamer; see `scratch/fit_g4_params.py`). The absolute numbers carry the field's real construct-to-construct spread, but the trends — 3-tetrad > 2-tetrad, short loops > long loops, K⁺ > Na⁺, [cation]↑ ⇒ stabilize — are guaranteed correct. Pairs naturally with §18: a K⁺-gated G4 aptamer's folded fraction drives the surface read-out (see `examples/11_quadruplex_aptamer.py`).
+The G4 is folded into the partition function as `Z_total = Z_secondary + Σ_g exp(−ΔG_g/RT)·Z_flank(g)`, where `Z_flank(g)` is computed by forcing the tetrad guanines unpaired via the existing `blocked` constraint, so the duplex-vs-G4 competition is exact *within the model* and needs no edit to the core DP. The two-state ΔH/ΔS model has a tract-association nucleation term, a per-tetrad-stack term (more tetrads ⇒ more stable), a loop-length entropic penalty (Guédin, Gros & Mergny 2010), and a Langmuir cation term sized so a G4 is essentially unfolded without stabilizing cation and K⁺ ≫ Na⁺. Reference parameters are fit to canonical melts (c-myc Pu22, telomere 22AG, thrombin-binding aptamer; see `scratch/fit_g4_params.py`). The absolute numbers carry the field's real construct-to-construct spread, but the trends, 3-tetrad > 2-tetrad, short loops > long loops, K⁺ > Na⁺, [cation]↑ ⇒ stabilize, are guaranteed correct. Pairs naturally with §18: a K⁺-gated G4 aptamer's folded fraction drives the surface read-out (see `examples/11_quadruplex_aptamer.py`).
 
-### 20. Low-copy stochastic capture — shot-noise-limited LOD
+### 20. Low-copy stochastic capture, shot-noise-limited LOD
 
-The deterministic `SurfaceModel` (§18) integrates a diffusion-limited flux against a bulk concentration that **never depletes** — fine at high analyte, a fantasy at the fM–aM concentrations where a limit of detection actually lives, where the sample aliquot holds only ~10¹–10⁴ molecules. There, capture is a **counting process** and its Poisson shot noise — not the amplifier — sets the LOD. `StochasticSurfaceModel` adds that physics.
+The deterministic `SurfaceModel` (§18) integrates a diffusion-limited flux against a bulk concentration that **never depletes**, fine at high analyte, a fantasy at the fM–aM concentrations where a limit of detection actually lives, where the sample aliquot holds only ~10¹–10⁴ molecules. There, capture is a **counting process** and its Poisson shot noise, not the amplifier, sets the LOD. `StochasticSurfaceModel` adds that physics.
 
 ```python
 from strider.surface import StochasticSurfaceModel, SurfaceParams
@@ -1724,13 +1781,13 @@ samp = sto.simulate_capture(*make(5e-17), n_trajectories=200)
 samp.empirical_mean, samp.empirical_var              # ≈ μ, μ  (Poisson)
 ```
 
-The captured mean is capped at the molecule budget (`μ = N_total·(1 − exp(−N_unsat/N_total))`) and the realized count is Poisson(μ). The **Currie (1968)** detection framework gives `L_D = 3.29·σ₀ + 2.71` counts with `σ₀ = √(μ_b + σ_read²)` (blank + read-out noise as equivalent label events); the irreducible `+k²` term is the textbook **≈2.71-captured-molecule zero-background floor** — no electronics can beat it. The resulting `shot_noise_lod` is ~10³× higher (and more honest) than the deterministic `SurfaceModel.lod`, which on the reference biosensor "detects" 3 molecules. `simulate_capture` builds a one-reaction capture CRN and runs the mantis SSA to reproduce the Poisson statistics end to end. See `examples/12_shot_noise_lod.py`. (Residual: a full reaction-diffusion PDE — spatial gradients near the electrode — is out of scope; this is the well-mixed shot-noise budget.)
+The captured mean is capped at the molecule budget (`μ = N_total·(1 − exp(−N_unsat/N_total))`) and the realized count is Poisson(μ). The **Currie (1968)** detection framework gives `L_D = 3.29·σ₀ + 2.71` counts with `σ₀ = √(μ_b + σ_read²)` (blank + read-out noise as equivalent label events); the irreducible `+k²` term is the textbook **≈2.71-captured-molecule zero-background floor**, no electronics can beat it. The resulting `shot_noise_lod` is ~10³× higher (and more honest) than the deterministic `SurfaceModel.lod`, which on the reference biosensor "detects" 3 molecules. `simulate_capture` builds a one-reaction capture CRN and runs the mantis SSA to reproduce the Poisson statistics end to end. See `examples/12_shot_noise_lod.py`. (Residual: a full reaction-diffusion PDE, spatial gradients near the electrode, is out of scope; this is the well-mixed shot-noise budget.)
 
 ---
 
 ### 21. Visualization
 
-The `strider.viz` subsystem renders publication-quality figures from strider data structures — secondary structures, multi-strand complexes, reaction cascades, accessibility tracks, arc diagrams, mountain plots, and energy landscapes — using only matplotlib. Layout is native (no ViennaRNA): a space-aware radial tree with crossing-aware strand ordering, so even large multi-way junctions and whole reaction cascades lay out cleanly. All viz functions are **lazily imported** from the top-level `strider` namespace, so `import strider` never pulls in matplotlib unless you actually call a drawing function.
+The `strider.viz` subsystem renders publication-quality figures from strider data structures, secondary structures, multi-strand complexes, reaction cascades, accessibility tracks, arc diagrams, mountain plots, and energy landscapes, using only matplotlib. Layout is native (no ViennaRNA): a space-aware radial tree with crossing-aware strand ordering, so even large multi-way junctions and whole reaction cascades lay out cleanly. All viz functions are **lazily imported** from the top-level `strider` namespace, so `import strider` never pulls in matplotlib unless you actually call a drawing function.
 
 <p align="center">
   <img src="examples/gallery_15_multiloop.png" alt="Multiloop stem-loop" height="240">
@@ -1751,7 +1808,7 @@ from strider import ThermoEngine, draw_structure, draw_complex
 
 engine = ThermoEngine(material='dna', celsius=37)
 
-# Single strand — auto-folds and draws
+# Single strand, auto-folds and draws
 ax = draw_structure('GCGCAAAAGCGC', engine=engine, title='Simple hairpin')
 ax.figure.savefig('hairpin.png', dpi=150, bbox_inches='tight')
 
@@ -1805,6 +1862,40 @@ Each species with resolvable sequences is drawn as a folded 2-D structure; abstr
   <img src="examples/cha_cascade.png" alt="CHA reaction cascade with ΔΔG and rate annotations" width="92%">
 </p>
 
+#### Assembly free-energy landscape
+
+`draw_assembly_landscape` renders a pathway as an **energy staircase beside its assembled complexes**: a classic energy-level diagram (each macrostate a level at its free energy, with downhill arrows and per-step ΔΔG) next to a column of minimalist native-viz cartoons of the complex(es) present at each level, tied together by faint leaders, plus an optional curved arrow for a recycled catalyst. Pass a `CHABridge` to auto-build the CHA macrostate ladder, reactants → reporter, with H2 entering at R2 and miR-21 recycled, or supply states explicitly:
+
+```python
+from strider import ThermoEngine, draw_assembly_landscape
+from strider.bridge.mantis_bridge import CHABridge
+
+bridge = CHABridge({'mirna': mir21, 'H1': h1, 'H2': h2, 'CP': cp}, engine=engine)
+# bridge input: CHA ladder + miR-21 recycle loop built automatically
+ax_energy, ax_viz = draw_assembly_landscape(bridge, engine=engine)
+ax_energy.figure.savefig('landscape.png', dpi=150, bbox_inches='tight')
+
+# explicit states: each is {energy, components, caption?, scale?}; a component
+# is a (label, sequences) pair / Complex / sequence string, drawn side by side
+ax_energy, ax_viz = draw_assembly_landscape(
+    [
+        {'energy': 0.0, 'components': [('miR-21', mir21), ('H1', h1)]},
+        {'energy': -7.2, 'components': [('miR·H1', [mir21, h1]), ('H2', h2)]},
+        {'energy': -10.6, 'components': [('H1·H2', [h1, h2]), ('miR-21', mir21)]},
+        {'energy': -21.9, 'components': [('H1·H2·CP', [h1, h2, cp])], 'scale': (1.15, 1.7)},
+    ],
+    engine=engine,
+    step_labels=['R1', 'R2', 'R3'],
+    recycle={'src': 2, 'dst': 0, 'label': 'miR-21\nrecycled'},
+)
+```
+
+Pass `axes=(ax_energy, ax_viz)` to draw into two existing axes of a larger multi-panel figure (this is exactly how `paper/figures/fig13_pipeline.py` builds its panel (a)); `recycle=False` omits the catalyst loop, and a per-state `scale` (scalar or `(width, height)`) enlarges that cartoon.
+
+<p align="center">
+  <img src="examples/cha_landscape.png" alt="CHA free-energy staircase beside the assembled complex at each level, with the miR-21 catalyst recycle loop" width="70%">
+</p>
+
 #### Accessibility track
 
 `draw_accessibility_track` renders a 1-D heatmap of per-position unpaired probability, optionally annotated with named domain brackets:
@@ -1843,7 +1934,7 @@ ax = energy_landscape(
 
 `strider.viz.style` defines the colour palette, nucleotide colours, strand cycle, and a `style_context()` context manager for globally adjusting font sizes and line widths. All viz functions use this shared palette, so figures are visually consistent out of the box.
 
-> **Lazy imports.** All viz names (`draw_structure`, `draw_complex`, `draw_cascade`, `arc_diagram`, `mountain_plot`, `energy_landscape`, `draw_accessibility_track`, `cha_circuit`, `layout_structure`) are available via `from strider import ...` — they pull in matplotlib only when first accessed. If matplotlib is missing, accessing them raises a clear hint to `pip install 'strider-dna[viz]'`.
+> **Lazy imports.** All viz names (`draw_structure`, `draw_complex`, `draw_cascade`, `draw_reaction_step`, `draw_assembly_landscape`, `arc_diagram`, `mountain_plot`, `energy_landscape`, `draw_accessibility_track`, `cha_circuit`, `layout_structure`) are available via `from strider import ...`, they pull in matplotlib only when first accessed. If matplotlib is missing, accessing them raises a clear hint to `pip install 'strider-dna[viz]'`.
 
 ---
 
@@ -1873,7 +1964,7 @@ ThermoEngine(
 | `pairs(*sequences)` | `np.ndarray` | Pair-probability matrix only |
 | `ensemble_defect(seqs, target_structure, normalize=True)` | `float` | Expected mispaired nucleotides vs a target dot-bracket |
 | `sample(seq, n_samples, seed=None)` | `list[(str, list)]` | Boltzmann-sampled structures |
-| `subopt(*sequences, gap=1.0, max_structures=200)` | `list[(str, float, list)]` | Suboptimal structures within `gap` of MFE (single- or multi-strand; shares `mfe`'s DP; `mfe`-consistent free energies — component-aware association penalty + coaxial) |
+| `subopt(*sequences, gap=1.0, max_structures=200)` | `list[(str, float, list)]` | Suboptimal structures within `gap` of MFE (single- or multi-strand; shares `mfe`'s DP; `mfe`-consistent free energies, component-aware association penalty + coaxial) |
 | `duplex_dg(seq1, seq2=None)` | `float` | ΔG of hybridization; `seq2=None` → intramolecular folding |
 | `ddg(reactants, products)` | `float` | ΔΔG = Σ G(products) − Σ G(reactants) (kcal/mol) |
 | `toehold_accessibility(seq, positions)` | `float` | Fraction of ensemble with all toehold positions unpaired |
@@ -1959,9 +2050,9 @@ Shared methods:
 
 ### `CircuitBridge` and `CHABridge`
 
-`CircuitBridge(reactions, sequences, engine=None, toehold_map=None, include_leakage=False, leakage_threshold=-4.0)` — generic, accepts any reaction topology. Returned by every template's `to_bridge()`.
+`CircuitBridge(reactions, sequences, engine=None, toehold_map=None, include_leakage=False, leakage_threshold=-4.0)`, generic, accepts any reaction topology. Returned by every template's `to_bridge()`.
 
-`CHABridge(sequences, ...)` is retained for backwards compatibility — same parameters and API as in the original 0.1.0 release. New code should prefer `circuits.CHA`.
+`CHABridge(sequences, ...)` is retained for backwards compatibility, same parameters and API as in the original 0.1.0 release. New code should prefer `circuits.CHA`.
 
 ### `CheckRegistry`
 
@@ -2024,7 +2115,7 @@ tube_analysis(tubes: Iterable[Tube], engine, tol=1e-9) → dict[str, TubeResult]
 ### `Assay` / `AssayPanel` / `Assembly`
 
 ```python
-# Original signature (still works — internally wraps a name-only Complex):
+# Original signature (still works, internally wraps a name-only Complex):
 Assembly(name, strands, structure=None, concentration=1e-6)
 
 # Or build explicitly from a Complex:
@@ -2037,7 +2128,7 @@ AssayPanel(assays=[Assay, ...])
 
 Methods: `defect(sequences, engine) → float`, `to_objective(engine, weight=1.0, equilibrium=False) → DesignObjective`.  Passing `equilibrium=True` weights each on-target by its true `Tube.analyze` post-equilibrium concentration instead of the declared `Assembly.concentration` (one Newton solve per objective evaluation).
 
-`Assembly` now composes a `Complex` under the hood — `.complex`, `.strand_names`, `.name` (canonical) are exposed alongside the original `.strands`, `.structure`, `.concentration` fields.
+`Assembly` now composes a `Complex` under the hood, `.complex`, `.strand_names`, `.name` (canonical) are exposed alongside the original `.strands`, `.structure`, `.concentration` fields.
 
 ### `ParameterSet` / `load_parameters`
 
@@ -2078,14 +2169,14 @@ result = designer.design(
     T_start=1.0,                   # initial simulated annealing temperature
     T_end=0.01,                    # final temperature
     verbose=False,
-    mutation_policy=None,          # MutationPolicy | None — defaults to Random
+    mutation_policy=None,          # MutationPolicy | None, defaults to Random
     parallel_tempering=False,      # geometric T_end → T_start ladder of chains
     n_chains=4,
     swap_every=20,
 ) → DesignResult
 ```
 
-`DomainSpec(length, sequence=None, material="dna", fixed=False, gc_band=None)` — `gc_band=(lo, hi)` enables an early-rejection pre-check that drops out-of-band mutations before objective evaluation.
+`DomainSpec(length, sequence=None, material="dna", fixed=False, gc_band=None)`, `gc_band=(lo, hi)` enables an early-rejection pre-check that drops out-of-band mutations before objective evaluation.
 
 #### Mutation policies
 
@@ -2141,7 +2232,7 @@ enumerator = LeakageEnumerator(
 )
 
 report = enumerator.enumerate(
-    strands,                  # dict[str, str] — name → sequence
+    strands,                  # dict[str, str], name → sequence
     intended_reactions=None,  # list[str] to exclude from report
 ) → LeakageReport
 ```
@@ -2154,7 +2245,7 @@ report = enumerator.enumerate(
 | `total_spurious` | Number of spurious reactions found |
 | `worst_ddg` | Most negative ΔΔG across all reactions |
 | `summary` | Human-readable summary string |
-| `to_mantis_strings()` | `list[str]` — mantis-style reaction strings |
+| `to_mantis_strings()` | `list[str]`, mantis-style reaction strings |
 | `filter(ddg_threshold)` | New `LeakageReport` keeping only reactions below threshold |
 
 ---
@@ -2195,7 +2286,7 @@ DiskCache.make_key(*args)  # → str (SHA-256 hex of args)
 
 ## Examples
 
-All examples are in the `examples/` directory and can be run directly. They use the always-available native backend — no external thermodynamic dependency required.
+All examples are in the `examples/` directory and can be run directly. They use the always-available native backend, no external thermodynamic dependency required.
 
 ```bash
 python examples/01_dna_thermodynamics.py
@@ -2219,67 +2310,67 @@ python examples/21_gallery_dendrimer.py
 python examples/22_gallery_four_arm_junction.py
 ```
 
-### `01_dna_thermodynamics.py` — NN model fundamentals
+### `01_dna_thermodynamics.py`, NN model fundamentals
 
 Demonstrates duplex ΔG, melting temperature, salt corrections, and LNA modification energetics. Validates strider's native NN implementation against published SantaLucia & Hicks (2004) values and shows how Owczarzy salt corrections shift Tm by several degrees under physiological conditions.
 
-### `02_hairpin_folding.py` — Structure prediction
+### `02_hairpin_folding.py`, Structure prediction
 
 Folds a panel of CHA hairpin candidates, draws their arc diagrams, plots mountain vectors, and computes pairwise structural distances. Shows how `fold_pseudoknot()` identifies structures that the standard MFE algorithm misses.
 
-### `03_tmsd_kinetics.py` — Zhang & Winfree rate model
+### `03_tmsd_kinetics.py`, Zhang & Winfree rate model
 
 Reproduces the Zhang & Winfree (2009) kf-vs-toehold-length curve, applies Arrhenius temperature corrections from 20 °C to 60 °C, and demonstrates how `rates_from_ddg()` propagates thermodynamic uncertainty into kinetic uncertainty. Annotates the 6-nt toehold "sweet spot" at 37 °C.
 
-### `04_sequence_design.py` — Simulated annealing optimization
+### `04_sequence_design.py`, Simulated annealing optimization
 
 Designs H1 and H2 sequences for the CHA cascade from scratch: specifies the miRNA-binding domain as a fixed constraint, composes a four-term objective (H1 stability + R1 driving force + spontaneous leakage suppression + GC content), applies `HardConstraint.max_run(4)` and `HardConstraint.gc_content()`, and runs 10-trial simulated annealing. Plots trial convergence curves and a mutation sensitivity heatmap for the best result.
 
-### `05_leakage_and_screening.py` — Leakage enumeration and off-target screening
+### `05_leakage_and_screening.py`, Leakage enumeration and off-target screening
 
 Enumerates all spurious pairwise and tripartite complexes for a set of CHA strands, ranks them by ΔΔG, and adds leakage reactions to a mantis network. Also loads a miRBase FASTA file (miR-21 family) and runs `OffTargetScreener` to compute selectivity of H1 against closely related miRNA sequences.
 
-### `06_parameter_sweep.py` — Grid sweeps and dose-response
+### `06_parameter_sweep.py`, Grid sweeps and dose-response
 
 Runs a 2D grid sweep over toehold length and temperature, caches results to disk, and plots a contour map. Also generates a dose-response curve ([miRNA]₀ vs. predicted signal fraction) by sweeping initial conditions through the mantis CRNetwork solver.
 
-### `07_cha_to_mantis.py` — End-to-end integration
+### `07_cha_to_mantis.py`, End-to-end integration
 
 The primary validation example. Demonstrates the complete pipeline:
 1. `ThermoEngine` with native backend at physiological conditions
-2. `CHABridge.verify()` — seven-check audit (the 0.1.0 API; the new `circuits.CHA().verify()` runs the same checks via the generic `CheckRegistry`)
-3. `bridge.to_crnetwork()` — export to mantis CRNetwork
+2. `CHABridge.verify()`, seven-check audit (the 0.1.0 API; the new `circuits.CHA().verify()` runs the same checks via the generic `CheckRegistry`)
+3. `bridge.to_crnetwork()`, export to mantis CRNetwork
 4. ODE integration and steady-state finding via mantis
-5. `bridge.sensitivity()` — one-at-a-time rate sensitivity analysis
+5. `bridge.sensitivity()`, one-at-a-time rate sensitivity analysis
 6. Predicted signal vs. miRNA concentration
 
-> For non-CHA topologies, swap `CHABridge` for `HCR(...)`, `SeesawGate(logic='AND', ...)`, `Translator(...)`, or any custom `CircuitTemplate` subclass — the rest of the pipeline is unchanged.
+> For non-CHA topologies, swap `CHABridge` for `HCR(...)`, `SeesawGate(logic='AND', ...)`, `Translator(...)`, or any custom `CircuitTemplate` subclass, the rest of the pipeline is unchanged.
 
-### `08_tube_analysis.py` — Multi-strand equilibrium
+### `08_tube_analysis.py`, Multi-strand equilibrium
 
 Builds two `Tube` objects at different total concentrations (100 nM and 10 μM), enumerates monomers + all dimers via `SetSpec(max_size=2)`, runs `tube_analysis()` once across both tubes, and prints per-species ΔG / equilibrium concentration plus a lazy pair-probability matrix lookup for the heterodimer. Demonstrates the `Strand` / `Complex` / `ComplexSet` / `Tube` / `TubeResult` surface end-to-end.
 
-### `09_dynamical_design.py` — Closed-loop dynamical design
+### `09_dynamical_design.py`, Closed-loop dynamical design
 
-Drives sequence optimization from a *kinetic* cost rather than a static equilibrium defect. Demonstrates the canonical use case from `outperform_nupack.md` item 1: **match a target step-response curve**. A single `A + B <-> AB` hybridization step, with strand A being just the 7-nt designed toehold (no flanking tail), so ΔΔG against the fixed 18-nt B partner spans ≈ −1 kcal/mol (no complementary register) to ≈ −5.8 kcal/mol (the strongest 7-nt window of B, reverse-complemented). Because B is long, *partial* complements still bind in their best register, so the landscape is graded — the optimizer has a gradient to climb. Two physics points drive the setup: **kf is sequence-independent** (Zhang–Winfree kf depends on toehold *length*, not sequence — only kr, hence the plateau, varies with ΔΔG), so the design lever is the **plateau height**, not the rise time; and a 7-mer plateau is **sub-saturating**, so the target is pinned to a fraction of the *measured* achievable maximum (the perfect complement's own plateau) rather than to full saturation, which would be unreachable. The example wraps the bridge as a `network_factory: (seqs) → mantis.CRNetwork` closure, uses `DesignObjective.kinetic_trajectory` to score the normalized MSE between the simulated [AB](t) and the target `A₀·(1 − exp(−t/τ))` curve, and lets `SequenceDesigner` find a toehold that matches. Each SA step rebuilds the CRN with the new sequence and reruns the mantis ODE — the feedback loop is honest. Targeting 50% of the achievable maximum makes it a genuine two-sided design (too-strong toeholds are penalized too): the optimizer drops the cost from ≈ 0.93 to ≈ 0.02. The output plot shows four curves (target, the strongest-possible 7-mer as the achievable ceiling, baseline `ATATATA` plateauing near 0 nM, and the optimized toehold landing on the target) alongside a per-trial SA convergence bar chart. Requires the optional `mantis-delta` dependency (`pip install strider-dna[mantis]`).
+Drives sequence optimization from a *kinetic* cost rather than a static equilibrium defect. Demonstrates the canonical use case from `outperform_nupack.md` item 1: **match a target step-response curve**. A single `A + B <-> AB` hybridization step, with strand A being just the 7-nt designed toehold (no flanking tail), so ΔΔG against the fixed 18-nt B partner spans ≈ −1 kcal/mol (no complementary register) to ≈ −5.8 kcal/mol (the strongest 7-nt window of B, reverse-complemented). Because B is long, *partial* complements still bind in their best register, so the landscape is graded, the optimizer has a gradient to climb. Two physics points drive the setup: **kf is sequence-independent** (Zhang–Winfree kf depends on toehold *length*, not sequence, only kr, hence the plateau, varies with ΔΔG), so the design lever is the **plateau height**, not the rise time; and a 7-mer plateau is **sub-saturating**, so the target is pinned to a fraction of the *measured* achievable maximum (the perfect complement's own plateau) rather than to full saturation, which would be unreachable. The example wraps the bridge as a `network_factory: (seqs) → mantis.CRNetwork` closure, uses `DesignObjective.kinetic_trajectory` to score the normalized MSE between the simulated [AB](t) and the target `A₀·(1 − exp(−t/τ))` curve, and lets `SequenceDesigner` find a toehold that matches. Each SA step rebuilds the CRN with the new sequence and reruns the mantis ODE, the feedback loop is honest. Targeting 50% of the achievable maximum makes it a genuine two-sided design (too-strong toeholds are penalized too): the optimizer drops the cost from ≈ 0.93 to ≈ 0.02. The output plot shows four curves (target, the strongest-possible 7-mer as the achievable ceiling, baseline `ATATATA` plateauing near 0 nM, and the optimized toehold landing on the target) alongside a per-trial SA convergence bar chart. Requires the optional `mantis-delta` dependency (`pip install strider-dna[mantis]`).
 
-### `10_domain_enumeration.py` — Template-free reaction enumeration
+### `10_domain_enumeration.py`, Template-free reaction enumeration
 
 Reads strand topology in domain space and *derives* the reachable complexes plus the bind / 3-way branch-migration / open transitions (the Visual DSD / Peppercorn job), assigns detailed-balance rates from the active `ThermoEngine`, and hands back a simulable mantis `CRNetwork`. Runs end-to-end on a textbook TMSD.
 
-### `11_quadruplex_aptamer.py` — K⁺-gated G-quadruplex → electrochemical read-out
+### `11_quadruplex_aptamer.py`, K⁺-gated G-quadruplex → electrochemical read-out
 
-Chains `fold_quadruplex` / `quadruplex_ensemble` (the §19 G4 layer) into the §18 surface transducer: the K⁺-dependent folded fraction of a telomeric G4 aptamer sets how many tethered redox reporters are in the signal-ON conformation, producing a [K⁺] calibration curve in nA. The whole transduction mechanism — G4 folding — is one NUPACK structurally cannot represent.
+Chains `fold_quadruplex` / `quadruplex_ensemble` (the §19 G4 layer) into the §18 surface transducer: the K⁺-dependent folded fraction of a telomeric G4 aptamer sets how many tethered redox reporters are in the signal-ON conformation, producing a [K⁺] calibration curve in nA. The whole transduction mechanism, G4 folding, is one NUPACK structurally cannot represent.
 
-### `12_shot_noise_lod.py` — Shot-noise-limited detection
+### `12_shot_noise_lod.py`, Shot-noise-limited detection
 
-Contrasts the deterministic surface LOD with the §20 stochastic one. The deterministic transducer's infinite-reservoir assumption "captures" thousands of molecules at concentrations where only a handful exist, giving an LOD ~10³× too optimistic; the `StochasticSurfaceModel` caps capture at the molecule budget, applies the Currie counting-statistics detection limit, and drives the capture as a mantis Gillespie SSA — exposing the Poisson shot-noise floor that actually limits the assay.
+Contrasts the deterministic surface LOD with the §20 stochastic one. The deterministic transducer's infinite-reservoir assumption "captures" thousands of molecules at concentrations where only a handful exist, giving an LOD ~10³× too optimistic; the `StochasticSurfaceModel` caps capture at the molecule budget, applies the Currie counting-statistics detection limit, and drives the capture as a mantis Gillespie SSA, exposing the Poisson shot-noise floor that actually limits the assay.
 
-### `13_complex_and_cascade.py` — Multi-strand complex + reaction cascade
+### `13_complex_and_cascade.py`, Multi-strand complex + reaction cascade
 
 Demonstrates `draw_complex` for a multi-strand H1·H2·CP complex and `draw_cascade` for the full CHA reaction pathway. Shows how strand colors are kept consistent across panels (same sequence = same color in every reactant/product structure).
 
-### `14–22` Gallery scripts — Visualization motifs
+### `14–22` Gallery scripts, Visualization motifs
 
 A set of gallery scripts, each showcasing `draw_structure`, `draw_complex`, or `draw_cascade` on a different structural motif. Each generates a publication-quality PNG using the native radial layout.
 
@@ -2305,7 +2396,7 @@ A set of gallery scripts, each showcasing `draw_structure`, `draw_complex`, or `
 
 ## Backend comparison
 
-The `native` backend uses strider's own Zuker MFE and McCaskill O(n³) partition-function DP with nick-aware recursions for multi-strand complexes — the same family of algorithm as ViennaRNA (RNAcofold). Both engines share a single loop-energy module (`thermo.ensemble`), so MFE and ensemble ΔG cannot drift apart. The multi-strand pfunc applies the σ rotational correction internally (Dirks et al. 2007) so output is species-level.
+The `native` backend uses strider's own Zuker MFE and McCaskill O(n³) partition-function DP with nick-aware recursions for multi-strand complexes, the same family of algorithm as ViennaRNA (RNAcofold). Both engines share a single loop-energy module (`thermo.ensemble`), so MFE and ensemble ΔG cannot drift apart. The multi-strand pfunc applies the σ rotational correction internally (Dirks et al. 2007) so output is species-level.
 
 **Performance** (single thread, pure Python, no JIT) on random sequences at physiological salt:
 
@@ -2317,9 +2408,9 @@ The `native` backend uses strider's own Zuker MFE and McCaskill O(n³) partition
 
 Reproduce with `python scripts/bench_mfe.py`.
 
-**Accuracy.** Stack energies match the source papers exactly (SantaLucia 2004 AA/TT = −1.00 kcal/mol, CG/CG = −2.17, GC/GC = −2.24; Mathews 1999 AU/UA = −0.93). The McCaskill outside recurrence is the exact adjoint of the inside DP: pair probabilities satisfy the unpaired-marginal identity to numerical precision (incl. multiloop-enclosed pairs, which the partition function now scores with a correct ≥2-branch multiloop closure — no stacked-helix double-count and with leading-unpaired bases). This holds for **single- and multi-strand** complexes alike — the immediate nick-junction pair straddling a strand boundary is exact too, validated against a brute-force enumeration of the model.
+**Accuracy.** Stack energies match the source papers exactly (SantaLucia 2004 AA/TT = −1.00 kcal/mol, CG/CG = −2.17, GC/GC = −2.24; Mathews 1999 AU/UA = −0.93). The McCaskill outside recurrence is the exact adjoint of the inside DP: pair probabilities satisfy the unpaired-marginal identity to numerical precision (incl. multiloop-enclosed pairs, which the partition function now scores with a correct ≥2-branch multiloop closure, no stacked-helix double-count and with leading-unpaired bases). This holds for **single- and multi-strand** complexes alike, the immediate nick-junction pair straddling a strand boundary is exact too, validated against a brute-force enumeration of the model.
 
-**Optional Vienna backend.** If `ViennaRNA` is installed and you set `backend='vienna'`, strider routes MFE to `fold_compound.mfe()` and the partition function to `fold_compound.pf()` (true ensemble ΔG = −RT·ln Z) with pair probabilities from `fold_compound.bpp()`. The backend honors the engine's `material`: DNA folds load ViennaRNA's bundled Mathews-2004 DNA parameters, RNA folds use Turner-2004. Use it for production-quality folding of sequences > ~200 nt where native runtime becomes the bottleneck. The Tube/ComplexSet API, leakage enumeration, kinetics, and design pipelines work identically on top of either backend. (It is a cross-check backend, never auto-selected — `'auto'` always resolves to `native` so results never silently depend on an external library.)
+**Optional Vienna backend.** If `ViennaRNA` is installed and you set `backend='vienna'`, strider routes MFE to `fold_compound.mfe()` and the partition function to `fold_compound.pf()` (true ensemble ΔG = −RT·ln Z) with pair probabilities from `fold_compound.bpp()`. The backend honors the engine's `material`: DNA folds load ViennaRNA's bundled Mathews-2004 DNA parameters, RNA folds use Turner-2004. Use it for production-quality folding of sequences > ~200 nt where native runtime becomes the bottleneck. The Tube/ComplexSet API, leakage enumeration, kinetics, and design pipelines work identically on top of either backend. (It is a cross-check backend, never auto-selected, `'auto'` always resolves to `native` so results never silently depend on an external library.)
 
 **When to use each backend:**
 
@@ -2345,15 +2436,17 @@ judge fit. These fall into two groups.
   (Turner/Mathews-derived, re-built from primary literature) differs from NUPACK's `rna06` set by
   a mean ~0.9 kcal/mol in ensemble ΔG. Topology (which pairs form) agrees well; absolute free
   energies carry this offset. Use NUPACK/ViennaRNA when sub-kcal RNA accuracy is the priority.
-- **Speed.** The native engine is pure-Python O(n³) DP with no JIT — roughly **~970× slower than
+- **Speed.** The native engine is pure-Python O(n³) DP with no JIT, roughly **~970× slower than
   NUPACK's C kernel** on single sequences (~4 ms at 20 nt, ~1 s at 100 nt for pfunc + pair probs).
   For long sequences (> ~200 nt) use the optional `vienna` backend, the GPU-batched
   `thermo.differentiable` path, or reserve native for screening/design at < 100 nt.
+<!--
 - **~13 °C hairpin-Tm offset.** Predicted molecular-beacon hairpin melting temperatures run ~13 °C
   below an experimental qPCR panel. The leading hypothesis is **end-stacking of the fluorophore/
   quencher labels** (an effect outside the bare-sequence NN model), not a parameter bug; this is
   flagged and tracked, not yet closed. Treat hairpin **Tm** as approximate; ΔG and *relative*
   comparisons are unaffected.
+-->
 
 **Shared with NUPACK/ViennaRNA (modeling choices common to NN-based tools, not strider bugs):**
 
@@ -2366,8 +2459,8 @@ judge fit. These fall into two groups.
   restricted H-type pseudoknot class only; general pseudoknots are out of scope and disabled by
   default.
 
-For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools — neither
-NUPACK nor ViennaRNA models Mg²⁺ — see the salt sections above.
+For the divalent-cation regime (Na⁺×Mg²⁺×T) strider is, if anything, *ahead* of both tools, neither
+NUPACK nor ViennaRNA models Mg²⁺, see the salt sections above.
 
 ---
 
@@ -2380,7 +2473,7 @@ pytest tests/ -v                      # default run: deselects the 6 `slow` test
 pytest tests/ -m "slow or not slow"   # full run incl. slow accuracy gates
 ```
 
-The full suite (`pytest -m "slow or not slow"`) is **646 passed, 1 xfailed, 11 skipped** in a clean environment. The skips are all optional peer dependencies — ViennaRNA (`RNA`), `mantis`, and `torch` (the `diff` extra); installing those extras converts the corresponding skips into passes. The 6 `slow` tests are deselected by `pytest` by default and include the CI-enforced structure-prediction F-measure gate (mean F ≥ 0.95 on the canonical hairpin set). No external thermodynamic tool is required to run the core suite.
+The full suite (`pytest -m "slow or not slow"`) is **646 passed, 1 xfailed, 11 skipped** in a clean environment. The skips are all optional peer dependencies, ViennaRNA (`RNA`), `mantis`, and `torch` (the `diff` extra); installing those extras converts the corresponding skips into passes. The 6 `slow` tests are deselected by `pytest` by default and include the CI-enforced structure-prediction F-measure gate (mean F ≥ 0.95 on the canonical hairpin set). No external thermodynamic tool is required to run the core suite.
 
 | File | Tests | What is covered |
 |---|---|---|
@@ -2415,7 +2508,7 @@ The full suite (`pytest -m "slow or not slow"`) is **646 passed, 1 xfailed, 11 s
 
 ### Multi-strand pair probabilities near a nick
 
-The native McCaskill outside recurrence is the exact adjoint of the inside recurrence: pair probabilities (and `TubeResult.defect`) satisfy the unpaired-marginal identity `Σ_j P(i,j) = 1 − P_unpaired(i)` to numerical precision, including pairs inside multiloops (previously underestimated). This now holds for **single- and multi-strand** complexes at **every** position — the immediate nick-junction pair `(i, i+1)` straddling a strand boundary (the coaxial closing pair) is exact too. The earlier over-count there was an artifact of the *constrained* (unpaired-marginal) partition, not the pair probabilities: forcing a position unpaired must not flip the inter-strand terminal-penalty leaf gate, which is a sequence-only model-shape decision. Validated against an exact brute-force enumeration of the model. Equilibrium concentrations and free energies are unaffected (they consume ΔG only).
+The native McCaskill outside recurrence is the exact adjoint of the inside recurrence: pair probabilities (and `TubeResult.defect`) satisfy the unpaired-marginal identity `Σ_j P(i,j) = 1 − P_unpaired(i)` to numerical precision, including pairs inside multiloops (previously underestimated). This now holds for **single- and multi-strand** complexes at **every** position, the immediate nick-junction pair `(i, i+1)` straddling a strand boundary (the coaxial closing pair) is exact too. The earlier over-count there was an artifact of the *constrained* (unpaired-marginal) partition, not the pair probabilities: forcing a position unpaired must not flip the inter-strand terminal-penalty leaf gate, which is a sequence-only model-shape decision. Validated against an exact brute-force enumeration of the model. Equilibrium concentrations and free energies are unaffected (they consume ΔG only).
 
 ### `CHA().verify()` fails spontaneous leakage check
 
@@ -2429,10 +2522,10 @@ Use `SequenceDesigner` with `DesignObjective.minimize_leakage()` weighted heavil
 ### Design converges to a high score (> 1.0)
 
 Simulated annealing can get trapped if:
-- **Conflicting objectives** — e.g. maximizing GC content while minimizing leakage. Check `result.objective_breakdown` to see which terms dominate.
-- **Hard constraints too restrictive** — if the constraint space is very small, most mutations get rejected. Try relaxing `HardConstraint.gc_content()` bounds.
-- **Too few iterations** — increase `max_iterations` or `n_trials`. The `trial_scores` list shows how much variance there is across restarts.
-- **Temperature schedule too fast** — lower `T_end` (e.g. 0.001) to allow finer convergence.
+- **Conflicting objectives**, e.g. maximizing GC content while minimizing leakage. Check `result.objective_breakdown` to see which terms dominate.
+- **Hard constraints too restrictive**, if the constraint space is very small, most mutations get rejected. Try relaxing `HardConstraint.gc_content()` bounds.
+- **Too few iterations**, increase `max_iterations` or `n_trials`. The `trial_scores` list shows how much variance there is across restarts.
+- **Temperature schedule too fast**, lower `T_end` (e.g. 0.001) to allow finer convergence.
 
 ### `DiskCache.get()` always returns `None`
 
@@ -2479,7 +2572,7 @@ The Catalytic Hairpin Assembly (CHA) cascade is a DNA nanotechnology circuit in 
 miRNA + H1   ⇌  miRNA·H1                   (toehold binding / dissociation)
 miRNA·H1 + H2 ⇌  H1·H2 + miRNA            (strand exchange / catalyst release)
 H1·H2 + CP   ⇌  H1·H2·CP                  (capture probe binding for readout)
-H1 + H2      ⇌  H1·H2                      (spontaneous leakage — suppressed)
+H1 + H2      ⇌  H1·H2                      (spontaneous leakage, suppressed)
 ```
 
 The miRNA is released intact in the second reaction, allowing it to trigger additional CHA cycles (catalytic turnover). The `CHABridge` class encodes this topology and automates the verification checks.
@@ -2488,9 +2581,9 @@ The miRNA is released intact in the second reaction, allowing it to trigger addi
 
 strider applies three salt models, each matched to the calculation that consumes it (all anchored so 1 M Na⁺ / 0 Mg²⁺ is a no-op):
 
-- **Per-base-pair `dg_per_bp_salt`** = c·ln([Na⁺] + 3.4·√[Mg²⁺])·T/T_ref — the *folding-engine* correction. It is a per-pair quantity, so the McCaskill / Zuker DP can add it to every closed base pair; this is what makes `mfe`, `pfunc`, and `duplex_dg` salt-aware. c = −0.114 (DNA) or ×1.06 for RNA (Tan-Chen per-stack ratio); the dependence is entropic, so it scales with absolute temperature (exact 37 °C anchor).
-- **Tan-Chen (2007) tightly-bound-ion model** — the *hairpin-Tm* correction. A whole-helix quantity (needs the stem length *N*), it reproduces the experimental Mg²⁺ Tm slope on a DNA-beacon qPCR panel (0.71 vs measured ≈0.70 °C/mM) where the other two miss. Default for stems ≥ 6 bp; see *§2 Hairpin melting temperature*.
-- **Owczarzy (2004/2008)** — duplex-Tm corrections, selecting between Na⁺-only and Mg²⁺-only by √[Mg²⁺]/[Na⁺]. Used by the oligo `melting_temperature` path and selectable for hairpins (`salt_model="owczarzy"`); duplex-calibrated, so it over-shoots Mg²⁺ on short hairpin stems.
+- **Per-base-pair `dg_per_bp_salt`** = c·ln([Na⁺] + 3.4·√[Mg²⁺])·T/T_ref, the *folding-engine* correction. It is a per-pair quantity, so the McCaskill / Zuker DP can add it to every closed base pair; this is what makes `mfe`, `pfunc`, and `duplex_dg` salt-aware. c = −0.114 (DNA) or ×1.06 for RNA (Tan-Chen per-stack ratio); the dependence is entropic, so it scales with absolute temperature (exact 37 °C anchor).
+- **Tan-Chen (2007) tightly-bound-ion model**, the *hairpin-Tm* correction. A whole-helix quantity (needs the stem length *N*), it reproduces the experimental Mg²⁺ Tm slope on a DNA-beacon qPCR panel (0.71 vs measured ≈0.70 °C/mM) where the other two miss. Default for stems ≥ 6 bp; see *§2 Hairpin melting temperature*.
+- **Owczarzy (2004/2008)**, duplex-Tm corrections, selecting between Na⁺-only and Mg²⁺-only by √[Mg²⁺]/[Na⁺]. Used by the oligo `melting_temperature` path and selectable for hairpins (`salt_model="owczarzy"`); duplex-calibrated, so it over-shoots Mg²⁺ on short hairpin stems.
 
 - **Tan Z-J & Chen S-J** (2007). RNA helix stability in mixed Na⁺/Mg²⁺ solution. *Biophys. J.* 92, 3615–3632.
 - **Owczarzy R et al.** (2004). Effects of sodium ions on DNA duplex oligomers. *Biochemistry* 43, 3537–3554.
