@@ -6,7 +6,7 @@ Tolerance: ±0.5 kcal/mol (NN model vs. experimental).
 """
 import pytest
 from strider.thermo.nn_dna import (
-    duplex_dg, duplex_dh_ds, melting_temperature, reverse_complement,
+    duplex_dg, duplex_dh_ds, melting_temperature, duplex_tm, reverse_complement,
     is_self_complementary, DNA_NN,
 )
 
@@ -93,6 +93,41 @@ class TestMeltingTemperature:
         tm_short = melting_temperature("ACGT")
         tm_long = melting_temperature("ACGTACGTACGT")
         assert tm_long > tm_short
+
+
+class TestDuplexTm:
+    P = "AGCTGACCTGAAGGTCAACGTA"  # 22mer, 50% GC
+
+    def test_sensible_primer_range(self):
+        # A normal 22mer primer at qPCR conditions should melt in a normal range.
+        tm = duplex_tm(self.P)
+        assert 45 < tm < 70
+
+    def test_dntp_chelation_lowers_tm(self):
+        # More dNTP chelates Mg, lowering free Mg and thus Tm.
+        hi_free = duplex_tm(self.P, magnesium_M=0.003, dntp_M=0.0)
+        lo_free = duplex_tm(self.P, magnesium_M=0.003, dntp_M=0.0008)
+        assert hi_free > lo_free
+
+    def test_dntp_excess_clamps_free_mg_to_zero(self):
+        # dNTP >= total Mg: free Mg floors at 0, no crash, and equals the
+        # zero-free-Mg case (further dNTP has no effect).
+        at_zero = duplex_tm(self.P, magnesium_M=0.003, dntp_M=0.003)
+        beyond = duplex_tm(self.P, magnesium_M=0.003, dntp_M=0.010)
+        assert at_zero == pytest.approx(beyond)
+
+    def test_matches_melting_temperature_at_matched_free_mg(self):
+        # duplex_tm is a thin wrapper: with dNTP=0 it must equal melting_temperature
+        # called with the same free Mg, Na and concentration.
+        direct = melting_temperature(
+            self.P, strand_conc_M=0.25e-6, sodium_M=0.05, magnesium_M=0.003
+        )
+        via = duplex_tm(self.P, sodium_M=0.05, magnesium_M=0.003, dntp_M=0.0,
+                        oligo_conc_M=0.25e-6)
+        assert direct == pytest.approx(via)
+
+    def test_higher_conc_raises_tm(self):
+        assert duplex_tm(self.P, oligo_conc_M=0.25e-6) > duplex_tm(self.P, oligo_conc_M=0.20e-6)
 
 
 class TestHelpers:

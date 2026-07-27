@@ -153,6 +153,54 @@ def melting_temperature(
     return tm
 
 
+def duplex_tm(
+    seq: str,
+    *,
+    sodium_M: float = 0.05,
+    magnesium_M: float = 0.003,
+    dntp_M: float = 0.0008,
+    oligo_conc_M: float = 0.25e-6,
+) -> float:
+    """
+    Melting temperature (°C) of a DNA oligo annealing to its perfect complement,
+    for a typical qPCR / primer setup.
+
+    This is the convenience call to use in place of primer3's ``calc_tm``: give
+    it one sequence and it returns the Tm of that strand paired with its reverse
+    complement (it does the complement-pairing for you, so there is no self-dimer
+    trap as with ``dimer_tm(seq)`` called on a single strand).
+
+    dNTPs are handled the way IDT and primer3 handle them: dNTP chelates Mg²⁺, so
+    only the *free* magnesium enters the salt correction,
+
+        [Mg²⁺]_free = max(0, [Mg²⁺]_total − [dNTP])
+
+    Salt is then applied via the Owczarzy 2004 correction (same family IDT and
+    primer3 use), so this tracks those tools closely.
+
+    Parameters
+    ----------
+    seq          : oligo sequence, 5'→3' (its reverse complement is the partner).
+    sodium_M     : monovalent [Na⁺] in molar (default 50 mM).
+    magnesium_M  : total [Mg²⁺] in molar, before dNTP chelation (default 3 mM).
+    dntp_M       : total [dNTP] in molar; subtracted from Mg²⁺ (default 0.8 mM).
+    oligo_conc_M : total strand concentration in molar (default 0.25 µM).
+
+    Notes
+    -----
+    Assumes a fully complementary duplex (no internal mismatches).  For a duplex
+    with mismatches, or to see the predicted structure, use ``dimer_thermo`` with
+    both strands passed explicitly.
+    """
+    free_mg = max(0.0, magnesium_M - dntp_M)
+    return melting_temperature(
+        seq,
+        strand_conc_M=oligo_conc_M,
+        sodium_M=sodium_M,
+        magnesium_M=free_mg,
+    )
+
+
 # ─── internals ───────────────────────────────────────────────────────────────
 
 def _sum_nn(seq: str) -> tuple[float, float]:

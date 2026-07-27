@@ -24,6 +24,7 @@ from strider.thermo.engine import ThermoEngine, MFEResult, PFuncResult
 from strider.thermo.nn_dna import (
     duplex_dg,
     melting_temperature,
+    duplex_tm,
     reverse_complement,
     is_self_complementary,
 )
@@ -147,7 +148,7 @@ __all__ = [
     # Core engine
     "ThermoEngine", "MFEResult", "PFuncResult",
     # Thermodynamics
-    "duplex_dg", "melting_temperature", "reverse_complement", "is_self_complementary",
+    "duplex_dg", "melting_temperature", "duplex_tm", "reverse_complement", "is_self_complementary",
     "owczarzy_tm_correction",
     "hairpin_tm", "hairpin_thermo", "fraction_folded", "HairpinThermo",
     "dimer_tm", "dimer_thermo", "dimer_thermo_subopt", "DimerThermo",
