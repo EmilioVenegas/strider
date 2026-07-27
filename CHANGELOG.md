@@ -5,6 +5,26 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [1.2.0] - 2026-07-27
+
+### Documentation
+
+- Add Zenodo DOI badge and citation information
+
+### Features
+
+- **thermo:** Add duplex_tm convenience for primer-style duplex Tm
+
+    Wraps melting_temperature to pair a sequence with its reverse complement
+    (avoiding the one-arg self-dimer trap in dimer_tm) and expose IDT/primer3-
+    style parameters: sodium_M, magnesium_M, dntp_M, oligo_conc_M with qPCR
+    defaults (50 mM Na, 3 mM Mg, 0.8 mM dNTP, 0.25 uM).
+
+    dNTP chelation is modeled as free Mg = max(0, total Mg - dNTP), feeding
+    only the free magnesium into the Owczarzy salt correction, matching how
+    IDT and primer3 treat dNTPs. Exported at top level; adds TestDuplexTm.
+
+
 ## [1.1.0] - 2026-06-23
 
 ### Documentation
