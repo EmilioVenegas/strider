@@ -1156,6 +1156,29 @@ def _symmetry_dg(strands: list[str]) -> float:
     return RT * math.log(sigma) if sigma > 1 else 0.0
 
 
+def _association_dg(strands: list[str], material: str) -> float:
+    """Bimolecular association penalty ``(L−1)·ΔG_assoc`` for a connected complex.
+
+    The nick-aware DP folds the ordered concatenation but does not charge the
+    strand-association cost; native ``ThermoEngine.pfunc`` adds it after the DP
+    (see ``engine._assoc_correction`` / the ``dG += self._assoc_correction(...)``
+    line), so ``complex_free_energy`` must add the same term to match native.
+    Each strand beyond the first in the connected complex costs one ``ΔG_assoc``
+    (Dirks 2007), sourced from ``parameters_{dna,rna}.JOIN_PENALTY`` (DNA 1.96,
+    RNA 4.09 kcal/mol at 37 °C).  Like σ, it is a structure-independent constant,
+    so it shifts the free energy without changing pair probabilities or the
+    sequence gradients.
+    """
+    n_assoc = len(strands) - 1
+    if n_assoc <= 0:
+        return 0.0
+    if str(material).lower().startswith("d"):
+        from strider.thermo.parameters_dna import JOIN_PENALTY
+    else:
+        from strider.thermo.parameters_rna import JOIN_PENALTY
+    return n_assoc * float(JOIN_PENALTY)
+
+
 def complex_free_energy(
     strands: list[str],
     material: str = "rna",
@@ -1164,8 +1187,13 @@ def complex_free_energy(
 ) -> torch.Tensor:
     """Ensemble free energy ΔG (kcal/mol) of a multi-strand complex.
 
-    Folds the nick-aware concatenation and (by default) applies the rotational
-    symmetry correction so the value matches ``ThermoEngine.pfunc(*strands)``.
+    Folds the nick-aware concatenation and applies the same post-DP corrections
+    native ``ThermoEngine.pfunc(*strands)`` applies: the rotational symmetry term
+    (``+RT·ln σ``, by default) and the bimolecular association penalty
+    ``(L−1)·ΔG_assoc``.  Both are structure-independent constants, so they shift
+    the free energy to match native without perturbing the pair probabilities.
+    The small coaxial-stacking correction native also adds (from the dominant
+    structure) is left out; it stays within the engine residual (< 1 kcal/mol).
     """
     if params is None:
         params = ThermoParameters(material=material)
@@ -1175,6 +1203,7 @@ def complex_free_energy(
         fe = model([seq], nicks=nicks)
     if symmetry:
         fe = fe + _symmetry_dg(strands)
+    fe = fe + _association_dg(strands, getattr(params, "material", material))
     return fe
 
 
