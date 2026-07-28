@@ -5,6 +5,49 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [1.2.1] - 2026-07-28
+
+### Bug Fixes
+
+- **differentiable:** Add association penalty to complex_free_energy
+
+    complex_free_energy folded the nick-aware concatenation and applied only
+    the rotational-symmetry correction, omitting the bimolecular association
+    penalty (L-1)*JOIN_PENALTY that native ThermoEngine.pfunc adds after its
+    DP. The differentiable ensemble ΔG therefore came out ~4.1 kcal/mol
+    (RNA JOIN_PENALTY=4.09) too stable, failing
+    test_complex_free_energy_matches_native on every main push.
+
+    Mirror native: add _association_dg (L-1)*ΔG_assoc as a structure-
+    independent constant, like the σ term, so pair probabilities and
+    sequence gradients are unchanged. Residual vs native drops to ~0.5-0.7
+    kcal/mol (the coaxial-stacking term native adds from the dominant
+    structure), within the test's 1.0 tolerance.
+
+- **salt:** Use von Ahsen sodium-equivalent in mixed-ion regime (#10)
+
+    _mixed_correction blended linearly between the Na-only and pure-Mg
+    Owczarzy fits, which pinned the result near the Na-only floor and left
+    duplex_tm/melting_temperature 6-10 C too low whenever Mg2+ was present
+    (worse for longer, lower-GC oligos). The NN core was fine; the whole
+    divergence was in the mixed-regime salt dispatch.
+
+    Replace the blend with the standard sodium-equivalent conversion used by
+    primer3, Biopython and IDT OligoAnalyzer (von Ahsen 2001, adopted by the
+    Owczarzy 2008 decision tree):
+
+        [Na]_eq = [Na] + 120*sqrt([Mg]_free)   (mM)
+
+    then evaluate the monovalent Owczarzy 2004 correction at [Na]_eq. On the
+    reporter's 7-oligo panel this moves strider from -6..-10 C below the
+    ecosystem to +1..+3 C, inside the tool-to-tool spread. Verified against
+    primer3-py (santalucia + owczarzy) locally.
+
+    Adds a mixed-regime regression test and relaxes the stale Mg-bound guard
+    (the 20-mer test sits in the mixed regime; von Ahsen legitimately gives a
+    low-teens Mg lift, not the ~+22 C the old N-factor bug produced).
+
+
 ## [1.2.0] - 2026-07-27
 
 ### Documentation
