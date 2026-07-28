@@ -125,11 +125,15 @@ class TestOwczarzyMagnesiumTm:
     SEQ20 = "ATCGATCGATCGATCGATCG"
 
     def test_mg_effect_is_physically_bounded(self):
-        # Adding 10 mM Mg²⁺ at low Na⁺ should raise Tm by a single-digit amount,
-        # not the ~+22 °C the buggy factor produced.
+        # This 20-mer at 50 mM Na⁺ / 10 mM Mg²⁺ sits in the mixed regime
+        # (√[Mg]/[Na] = 2.0), so the correction goes through the von Ahsen
+        # sodium-equivalent path. That legitimately puts the Mg lift in the low
+        # teens for a 20-mer (~+13 °C, endpoints within ~1.5 °C of primer3), not
+        # the ~+22 °C the old hardcoded N=2 factor produced. Bound guards against
+        # that blow-up while allowing the correct equivalent-sodium magnitude.
         base = melting_temperature(self.SEQ20, 250e-9, 0.05, 0.0)
         mg = melting_temperature(self.SEQ20, 250e-9, 0.05, 0.01)
-        assert 0.0 < (mg - base) < 12.0
+        assert 0.0 < (mg - base) < 16.0
 
     def test_mg_monotonic_stabilizes(self):
         tms = [melting_temperature(self.SEQ20, 250e-9, 0.05, mg)
@@ -148,6 +152,25 @@ class TestOwczarzyMagnesiumTm:
         # Typical PCR-ish buffer (Na 0.05, Mg 3 mM) must give a finite, modest Tm.
         tm = melting_temperature(self.SEQ20, 250e-9, 0.05, 0.003)
         assert 40.0 < tm < 75.0
+
+    def test_mixed_regime_tracks_equivalent_sodium(self):
+        # Regression for issue #10: in the mixed regime the Mg²⁺ correction must
+        # use the von Ahsen sodium-equivalent recipe ([Na]_eq = [Na] +
+        # 120·√[Mg]_free, mM), the same conversion primer3/Biopython/IDT use, not
+        # the old linear blend that pinned the result near the Na-only floor and
+        # left duplex Tm 6-10 °C low. The correction must equal melting_temperature
+        # evaluated at the equivalent sodium, and the value must sit in the
+        # ecosystem cluster (primer3/IDT ~60-62 °C) rather than the old ~48 °C.
+        import math
+        from strider.thermo.nn_dna import duplex_tm
+        seq = "ATGTAATTGTTACATTATGTAATATTGT"  # 28 nt, low GC (worst case for the bug)
+        tm = duplex_tm(seq, sodium_M=0.05, magnesium_M=0.01,
+                       dntp_M=0.0008, oligo_conc_M=500e-9)
+        free_mg_mM = (0.01 - 0.0008) * 1000.0
+        na_eq = 0.05 + 0.120 * math.sqrt(free_mg_mM)
+        ref = melting_temperature(seq, 500e-9, na_eq, 0.0)
+        assert abs(tm - ref) < 0.5
+        assert 58.0 < tm < 63.0
 
 
 class TestHairpinOwczarzySaltModel:

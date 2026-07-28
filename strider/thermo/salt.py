@@ -245,9 +245,20 @@ def _mg_correction(fGC: float, mg_M: float, n_bp: int) -> float:
 
 
 def _mixed_correction(fGC: float, sodium_M: float, magnesium_M: float, n_bp: int) -> float:
-    """Owczarzy 2008 mixed-ion regime."""
-    na_part = _na_correction(fGC, sodium_M)
-    mg_part = _mg_correction(fGC, magnesium_M, n_bp)
-    ratio = math.sqrt(magnesium_M) / sodium_M
-    alpha = (ratio - 0.22) / (6.0 - 0.22)
-    return (1 - alpha) * na_part + alpha * mg_part
+    """Owczarzy 2008 mixed-ion regime via the sodium-equivalent recipe.
+
+    In the mixed regime (0.22 ≤ √[Mg²⁺]/[Na⁺] < 6) the divalent contribution is
+    folded into an equivalent monovalent concentration (von Ahsen et al. 2001,
+    the conversion the Owczarzy 2008 decision tree, primer3, Biopython and IDT
+    OligoAnalyzer all use), and the monovalent Owczarzy 2004 correction is then
+    evaluated at that equivalent sodium:
+
+        [Na⁺]_eq = [Na⁺] + 120·√[Mg²⁺]_free      (concentrations in mM)
+
+    ``magnesium_M`` here is already the free magnesium (``duplex_tm`` subtracts
+    dNTP before calling).  The previous linear blend between the Na-only and
+    pure-Mg fits stayed pinned near the Na-only floor and left mixed-regime Tm
+    predictions 6–10 °C low versus the rest of the ecosystem.
+    """
+    na_eq = sodium_M + 0.120 * math.sqrt(magnesium_M * 1000.0)  # mM → back to M
+    return _na_correction(fGC, na_eq)
