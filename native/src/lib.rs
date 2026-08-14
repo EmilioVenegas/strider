@@ -10,6 +10,9 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 
+mod dimer;
+mod tables;
+
 const R: f64 = 1.987e-3; // kcal / (mol . K)
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -439,6 +442,11 @@ fn duplex_tm(
     Ok(tm_raw(seq, oligo_conc_M, sodium_M, free_mg))
 }
 
+#[pyfunction]
+fn dimer_mfe_candidates(seq1: &str, seq2: &str) -> Vec<(f64, Vec<(usize, usize)>)> {
+    dimer::dimer_mfe_candidates_dna(seq1.as_bytes(), seq2.as_bytes())
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(reverse_complement, m)?)?;
@@ -452,5 +460,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dg_per_bp_salt, m)?)?;
     m.add_function(wrap_pyfunction!(duplex_salt_dg, m)?)?;
     m.add_function(wrap_pyfunction!(tan_chen_helix_dg, m)?)?;
+    m.add_function(wrap_pyfunction!(dimer_mfe_candidates, m)?)?;
     Ok(())
 }
