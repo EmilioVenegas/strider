@@ -33,6 +33,14 @@ from __future__ import annotations
 import math
 import numpy as np
 
+from strider.thermo import parameters_dna as _pdna
+from strider.thermo import parameters_rna as _prna
+from strider.thermo._param_context import lookup_scalar, lookup_table
+
+# Hoisted from the per-call ``from ... import ...`` statements that used to run
+# inside the DP inner loops (Python re-executes the import statement on every
+# function call — ~µs each, tens of thousands of times per fold).
+
 R = 1.987e-3        # kcal / (mol · K)
 INF = float("inf")
 
@@ -135,30 +143,22 @@ def _hairpin_loop_energy(seq: str, i: int, j: int, material: str, T: float) -> f
     if loop_size < 3:
         return INF
 
-    from strider.thermo._param_context import lookup_scalar, lookup_table
     if material == "dna":
-        from strider.thermo.parameters_dna import (
-            HAIRPIN_SIZE, LOG_LOOP_PENALTY, HAIRPIN_MISMATCH,
-            TERMINAL_PENALTY, HAIRPIN_TRILOOP, HAIRPIN_TETRALOOP,
-        )
-        mismatch_table = HAIRPIN_MISMATCH
+        mismatch_const = _pdna.HAIRPIN_MISMATCH
     else:
-        from strider.thermo.parameters_rna import (
-            HAIRPIN_SIZE, LOG_LOOP_PENALTY, TERMINAL_MISMATCH,
-            TERMINAL_PENALTY, HAIRPIN_TRILOOP, HAIRPIN_TETRALOOP,
-        )
-        mismatch_table = TERMINAL_MISMATCH
+        mismatch_const = _prna.TERMINAL_MISMATCH
+    P = _pdna if material == "dna" else _prna
 
-    HAIRPIN_SIZE = lookup_table("hairpin_size", HAIRPIN_SIZE)
-    LOG_LOOP_PENALTY = lookup_scalar("log_loop_penalty", LOG_LOOP_PENALTY)
-    TERMINAL_PENALTY = lookup_table("terminal_penalty", TERMINAL_PENALTY)
-    HAIRPIN_TRILOOP = lookup_table("hairpin_triloop", HAIRPIN_TRILOOP)
-    HAIRPIN_TETRALOOP = lookup_table("hairpin_tetraloop", HAIRPIN_TETRALOOP)
+    HAIRPIN_SIZE = lookup_table("hairpin_size", P.HAIRPIN_SIZE)
+    LOG_LOOP_PENALTY = lookup_scalar("log_loop_penalty", P.LOG_LOOP_PENALTY)
+    TERMINAL_PENALTY = lookup_table("terminal_penalty", P.TERMINAL_PENALTY)
+    HAIRPIN_TRILOOP = lookup_table("hairpin_triloop", P.HAIRPIN_TRILOOP)
+    HAIRPIN_TETRALOOP = lookup_table("hairpin_tetraloop", P.HAIRPIN_TETRALOOP)
     # First-mismatch table follows the original DNA/RNA branch.
     if material == "dna":
-        mismatch_table = lookup_table("hairpin_mismatch", mismatch_table)
+        mismatch_table = lookup_table("hairpin_mismatch", mismatch_const)
     else:
-        mismatch_table = lookup_table("terminal_mismatch", mismatch_table)
+        mismatch_table = lookup_table("terminal_mismatch", mismatch_const)
 
     # Base size: hairpin_size table is indexed by loop_size - 1.
     size_idx = loop_size - 1
@@ -202,14 +202,11 @@ def _stack_energy(seq: str, i: int, j: int, material: str) -> float:
     Key: seq[i] + seq[i+1] + seq[j-1] + seq[j]
         (canonical NN-stack convention, SantaLucia 1998 PNAS 95:1460-1465).
     """
-    from strider.thermo._param_context import lookup_table
     key = seq[i] + seq[i + 1] + seq[j - 1] + seq[j]
     if material == "dna":
-        from strider.thermo.parameters_dna import STACK
-        return lookup_table("stack", STACK).get(key, -1.5)
+        return lookup_table("stack", _pdna.STACK).get(key, -1.5)
     else:
-        from strider.thermo.parameters_rna import STACK
-        return lookup_table("stack", STACK).get(key, -2.0)
+        return lookup_table("stack", _prna.STACK).get(key, -2.0)
 
 
 def _interior_bulge_energy(
@@ -227,30 +224,18 @@ def _interior_bulge_energy(
         dG_strider = TP_outer + dG_nn - TP_inner
     where dG_nn is the standard nearest-neighbor interior-loop energy.
     """
-    from strider.thermo._param_context import lookup_scalar, lookup_table
+    P = _pdna if material == "dna" else _prna
+    BULGE_SIZE = lookup_table("bulge_size", P.BULGE_SIZE)
+    INTERIOR_SIZE = lookup_table("interior_size", P.INTERIOR_SIZE)
+    LOG_LOOP_PENALTY = lookup_scalar("log_loop_penalty", P.LOG_LOOP_PENALTY)
+    ASYMMETRY_NINIO = lookup_table("asymmetry_ninio", P.ASYMMETRY_NINIO)
+    TERMINAL_PENALTY = lookup_table("terminal_penalty", P.TERMINAL_PENALTY)
+    STACK = lookup_table("stack", P.STACK)
     if material == "dna":
-        from strider.thermo.parameters_dna import (
-            BULGE_SIZE, INTERIOR_SIZE, LOG_LOOP_PENALTY,
-            ASYMMETRY_NINIO, TERMINAL_PENALTY, STACK,
-            INTERIOR_MISMATCH, INTERIOR_1_1, INTERIOR_1_2, INTERIOR_2_2,
-        )
-    else:
-        from strider.thermo.parameters_rna import (
-            BULGE_SIZE, INTERIOR_SIZE, LOG_LOOP_PENALTY,
-            ASYMMETRY_NINIO, TERMINAL_PENALTY, STACK,
-        )
-
-    BULGE_SIZE = lookup_table("bulge_size", BULGE_SIZE)
-    INTERIOR_SIZE = lookup_table("interior_size", INTERIOR_SIZE)
-    LOG_LOOP_PENALTY = lookup_scalar("log_loop_penalty", LOG_LOOP_PENALTY)
-    ASYMMETRY_NINIO = lookup_table("asymmetry_ninio", ASYMMETRY_NINIO)
-    TERMINAL_PENALTY = lookup_table("terminal_penalty", TERMINAL_PENALTY)
-    STACK = lookup_table("stack", STACK)
-    if material == "dna":
-        INTERIOR_MISMATCH = lookup_table("interior_mismatch", INTERIOR_MISMATCH)
-        INTERIOR_1_1 = lookup_table("interior_1_1", INTERIOR_1_1)
-        INTERIOR_1_2 = lookup_table("interior_1_2", INTERIOR_1_2)
-        INTERIOR_2_2 = lookup_table("interior_2_2", INTERIOR_2_2)
+        INTERIOR_MISMATCH = lookup_table("interior_mismatch", P.INTERIOR_MISMATCH)
+        INTERIOR_1_1 = lookup_table("interior_1_1", P.INTERIOR_1_1)
+        INTERIOR_1_2 = lookup_table("interior_1_2", P.INTERIOR_1_2)
+        INTERIOR_2_2 = lookup_table("interior_2_2", P.INTERIOR_2_2)
 
     TP_outer = TERMINAL_PENALTY.get(seq[i] + seq[j], 0.0)
     TP_inner = TERMINAL_PENALTY.get(seq[ip] + seq[jp], 0.0)
@@ -366,12 +351,8 @@ def _can_pair_nicks(seq: str, i: int, j: int, pairs: set, nicks: list,
 
 def _terminal_pair_penalty(seq: str, i: int, j: int, material: str) -> float:
     """Terminal base-pair penalty at a helix terminus (SantaLucia 1998)."""
-    from strider.thermo._param_context import lookup_table
-    if material == "dna":
-        from strider.thermo.parameters_dna import TERMINAL_PENALTY
-    else:
-        from strider.thermo.parameters_rna import TERMINAL_PENALTY
-    return lookup_table("terminal_penalty", TERMINAL_PENALTY).get(seq[i] + seq[j], 0.0)
+    P = _pdna if material == "dna" else _prna
+    return lookup_table("terminal_penalty", P.TERMINAL_PENALTY).get(seq[i] + seq[j], 0.0)
 
 
 # ─── DP fill ──────────────────────────────────────────────────────────────────
@@ -408,17 +389,12 @@ def _fill_dp_nicks(seq, Q, Qb, QM, QM1, n, T, pairs, material, nicks: list,
     ``blocked`` is an optional set of positions forbidden from pairing (hard
     structural constraint / used to compute unpaired marginals).
     """
-    from strider.thermo._param_context import lookup_scalar, lookup_table
-    if material == "dna":
-        from strider.thermo.parameters_dna import ML_INIT, ML_PAIR, ML_BASE, DANGLE_3, DANGLE_5
-    else:
-        from strider.thermo.parameters_rna import ML_INIT, ML_PAIR, ML_BASE, DANGLE_3, DANGLE_5
-
-    ML_INIT = lookup_scalar("multiloop_init", ML_INIT)
-    ML_PAIR = lookup_scalar("multiloop_pair", ML_PAIR)
-    ML_BASE = lookup_scalar("multiloop_base", ML_BASE)
-    DANGLE_5 = lookup_table("dangle_5", DANGLE_5)
-    DANGLE_3 = lookup_table("dangle_3", DANGLE_3)
+    P = _pdna if material == "dna" else _prna
+    ML_INIT = lookup_scalar("multiloop_init", P.ML_INIT)
+    ML_PAIR = lookup_scalar("multiloop_pair", P.ML_PAIR)
+    ML_BASE = lookup_scalar("multiloop_base", P.ML_BASE)
+    DANGLE_5 = lookup_table("dangle_5", P.DANGLE_5)
+    DANGLE_3 = lookup_table("dangle_3", P.DANGLE_3)
 
     bm_ml_pair        = _boltzmann(ML_PAIR, T)
     bm_ml_base        = _boltzmann(ML_BASE, T)

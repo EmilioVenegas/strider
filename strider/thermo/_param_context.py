@@ -85,14 +85,12 @@ def lookup_table(
     the requested sub-table, otherwise the supplied module-constant
     ``fallback``.  The two-arg signature keeps the call site to a single
     expression so the DP inner loops stay compact.
+
+    Hot path: this runs ~50k times per folding DP fill on short oligos, so it
+    fast-paths to a single ContextVar read and, at most, one dict lookup.
     """
     override = _param_override.get()
-    if override is None:
-        return fallback
-    table = override.dG.get(name)
-    if table is None:
-        return fallback
-    return table
+    return fallback if override is None else override.dG.get(name, fallback)
 
 
 def lookup_scalar(name: str, fallback: float) -> float:
@@ -101,6 +99,4 @@ def lookup_scalar(name: str, fallback: float) -> float:
     if override is None:
         return fallback
     val = override.dG.get(name)
-    if val is None:
-        return fallback
-    return float(val)
+    return fallback if val is None else float(val)
