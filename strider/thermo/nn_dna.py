@@ -241,3 +241,22 @@ def _ln_CT(CT: float, self_comp: bool) -> float:
     if self_comp:
         return math.log(CT)
     return math.log(CT / 4.0)
+
+
+# ── optional Rust accelerator ──────────────────────────────────────────────
+# ``strider._native`` re-implements the hot paths above in Rust (see
+# ``native/`` in the source tree; build with ``scripts/build_native.sh``).
+# Implementations are bit-compatible — the Python definitions above remain
+# as the fallback when the extension is absent, and as the oracle for the
+# parity test-suite (``tests/test_native_parity.py``).
+try:
+    from strider import _native as _n
+
+    reverse_complement = _n.reverse_complement
+    is_self_complementary = _n.is_self_complementary
+    duplex_dh_ds = _n.duplex_dh_ds
+    duplex_dg = _n.duplex_dg
+    melting_temperature = _n.melting_temperature
+    duplex_tm = _n.duplex_tm
+except ImportError:  # pragma: no cover - extension absent (pure-Python env)
+    _n = None

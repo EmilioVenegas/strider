@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools-scm>=8"]
+requires = ["setuptools>=64", "setuptools-scm>=8", "setuptools-rust>=1.9"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -40,6 +40,16 @@ include = ["strider*"]
 [tool.setuptools_scm]
 # Version is derived from git tags (vX.Y.Z). Between tags, builds get a
 # PEP 440 dev version (e.g. 0.2.1.devN+g<hash>). No manual version bumps.
+
+# Optional Rust accelerator `strider._native` (see native/ and README section
+# "Native acceleration").  optional=True: if a Rust toolchain is unavailable
+# at build time (sdist consumer, CI without cargo), the build continues
+# without it and strider falls back to the pure-Python implementations
+# (bit-compatible, see tests/test_native_parity.py).
+[tool.setuptools-rust]
+extensions = [
+    { target = "strider._native", path = "native/Cargo.toml", binding = "PyO3", optional = true },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

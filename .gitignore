@@ -85,3 +85,6 @@ site/
 data/
 
 paper/
+
+# Rust build artifacts (native accelerator)
+native/target/
