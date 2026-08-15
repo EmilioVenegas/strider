@@ -46,10 +46,14 @@ include = ["strider*"]
 # at build time (sdist consumer, CI without cargo), the build continues
 # without it and strider falls back to the pure-Python implementations
 # (bit-compatible, see tests/test_native_parity.py).
-[tool.setuptools-rust]
-extensions = [
-    { target = "strider._native", path = "native/Cargo.toml", binding = "PyO3", optional = true },
-]
+# NOTE: setuptools-rust reads [[tool.setuptools-rust.ext-modules]] — the plain
+# `extensions` list form is silently ignored (empty dist.rust_extensions).
+[[tool.setuptools-rust.ext-modules]]
+target = "strider._native"
+path = "native/Cargo.toml"
+binding = "PyO3"
+optional = true
+py-limited-api = "auto"  # abi3 (pyo3 abi3-py38 feature): one wheel covers cp38+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

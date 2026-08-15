@@ -128,29 +128,39 @@ fn is_self_complementary(seq: &str) -> bool {
 
 #[inline]
 fn nn_lookup(a: u8, b: u8) -> (f64, f64) {
-    // Python _sum_nn: direct dict hit, else complement-pair, else (-8.0,-22.0).
     if a != 255 && b != 255 {
         return NN[((a << 2) | b) as usize];
     }
-    // Complement fallback: reverse_complement(dinuc)
-    let ca = complement_byte(b);
-    let cb = complement_byte(a);
-    let ca_code = BASE_CODE[ca as usize];
-    let cb_code = BASE_CODE[cb as usize];
-    if ca_code != 255 && cb_code != 255 {
-        return NN[((ca_code << 2) | cb_code) as usize];
-    }
-    (-8.0, -22.0) // average
+    // The Python `_sum_nn` complement-pair retry (reverse_complement(dinuc)
+    // then dict lookup again) is structurally unreachable: every ACGT
+    // dinucleotide already hits the full 16-entry table above, and a dinuc
+    // holding a non-ACGT base yields a reverse-complement that also contains
+    // one, so Python can only ever arrive at the (-8.0, -22.0) average —
+    // which this arm returns directly.
+    (-8.0, -22.0)
 }
 
 /// (ΔH kcal/mol, ΔS cal/mol/K) from `_sum_nn` + `_initiation` + symmetry term,
 /// mirroring `nn_dna.duplex_dh_ds`. Input: raw UTF-8 sequence bytes.
+fn require_nonempty(seq: &[u8]) -> PyResult<()> {
+    // Python raises IndexError("string index out of range") on empty input,
+    // surfacing from _initiation's seq[0] access; every public entry point
+    // downstream of it (duplex_dh_ds, duplex_dg, melting_temperature,
+    // duplex_tm) therefore errors the same way.
+    if seq.is_empty() {
+        return Err(pyo3::exceptions::PyIndexError::new_err(
+            "string index out of range",
+        ));
+    }
+    Ok(())
+}
+
 fn duplex_dh_ds_bytes(seq: &[u8]) -> (f64, f64) {
     let mut dh = 0.0;
     let mut ds = 0.0;
     let n = seq.len();
     if n == 0 {
-        return (0.0, 0.0); // Python raises IndexError; empty input is invalid
+        return (0.0, 0.0); // callers guard via require_nonempty
     }
     for i in 0..n.saturating_sub(1) {
         let a = BASE_CODE[seq[i] as usize];
@@ -176,8 +186,11 @@ fn duplex_dh_ds_bytes(seq: &[u8]) -> (f64, f64) {
 }
 
 #[pyfunction]
-fn duplex_dh_ds(seq: &str) -> (f64, f64) {
-    duplex_dh_ds_bytes(seq.as_bytes())
+#[pyo3(signature = (seq, complement=None))]
+fn duplex_dh_ds(seq: &str, complement: Option<&str>) -> PyResult<(f64, f64)> {
+    let _ = complement; // API parity: upstream accepts but never reads it
+    require_nonempty(seq.as_bytes())?;
+    Ok(duplex_dh_ds_bytes(seq.as_bytes()))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -285,16 +298,26 @@ fn duplex_salt_dg(seq: &str, sodium_M: f64, magnesium_M: f64, celsius: f64, mate
 #[pyfunction]
 #[pyo3(signature = (n_pairs, sodium_M, magnesium_M=0.0, material="dna"))]
 fn tan_chen_helix_dg(
-    n_pairs: i64,
+    n_pairs: f64,
     sodium_M: f64,
     magnesium_M: f64,
     material: &str,
 ) -> PyResult<f64> {
     const MIN_BP: i64 = 6;
-    let n = n_pairs;
+    if !n_pairs.is_finite() {
+        // Python: int(NaN) → ValueError; int(±inf) → OverflowError
+        if n_pairs.is_nan() {
+            return Err(PyValueError::new_err("cannot convert float NaN to integer"));
+        }
+        return Err(pyo3::exceptions::PyOverflowError::new_err(
+            "cannot convert float infinity to integer",
+        ));
+    }
+    // Python: int(n_pairs) — truncation toward zero.
+    let n = n_pairs as i64;
     if n < MIN_BP {
         return Err(PyValueError::new_err(format!(
-            "Tan-Chen helix salt model is fit for stems >= {} bp; got N={}. Use the per-base-pair model for short stems.",
+            "Tan-Chen helix salt model is fit for stems ≥ {} bp; got N={}. Use the per-base-pair model for short stems.",
             MIN_BP, n
         )));
     }
@@ -358,22 +381,26 @@ fn duplex_dg(
     celsius: f64,
     sodium_M: f64,
     magnesium_M: f64,
-) -> f64 {
+) -> PyResult<f64> {
     let _ = complement; // API parity: upstream accepts but never reads it
+    require_nonempty(seq.as_bytes())?;
+    Ok(duplex_dg_raw(seq.as_bytes(), celsius, sodium_M, magnesium_M))
+}
+
+fn duplex_dg_raw(seq: &[u8], celsius: f64, sodium_M: f64, magnesium_M: f64) -> f64 {
     let t = celsius + 273.15;
-    let (dh, ds) = duplex_dh_ds_bytes(seq.as_bytes());
+    let (dh, ds) = duplex_dh_ds_bytes(seq);
     let mut dg = dh - t * (ds / 1000.0);
     if sodium_M != 1.0 || magnesium_M > 0.0 {
-        dg += duplex_salt_dg(seq, sodium_M, magnesium_M, celsius, "dna");
+        dg += seq.len() as f64 * dg_per_bp_salt(sodium_M, magnesium_M, celsius, "dna");
     }
     dg
 }
 
-#[pyfunction]
-#[pyo3(signature = (seq, strand_conc_M=250e-9, sodium_M=0.137, magnesium_M=0.0))]
-fn melting_temperature(seq: &str, strand_conc_M: f64, sodium_M: f64, magnesium_M: f64) -> f64 {
-    let (dh, ds) = duplex_dh_ds_bytes(seq.as_bytes());
-    let self_comp = is_self_complementary_norm_bytes(seq.as_bytes());
+fn tm_raw(seq: &str, strand_conc_M: f64, sodium_M: f64, magnesium_M: f64) -> f64 {
+    let bytes = seq.as_bytes();
+    let (dh, ds) = duplex_dh_ds_bytes(bytes);
+    let self_comp = is_self_complementary_norm_bytes(bytes);
     let ln_ct = if self_comp {
         strand_conc_M.ln()
     } else {
@@ -387,10 +414,29 @@ fn melting_temperature(seq: &str, strand_conc_M: f64, sodium_M: f64, magnesium_M
 }
 
 #[pyfunction]
+#[pyo3(signature = (seq, strand_conc_M=250e-9, sodium_M=0.137, magnesium_M=0.0))]
+fn melting_temperature(
+    seq: &str,
+    strand_conc_M: f64,
+    sodium_M: f64,
+    magnesium_M: f64,
+) -> PyResult<f64> {
+    require_nonempty(seq.as_bytes())?;
+    Ok(tm_raw(seq, strand_conc_M, sodium_M, magnesium_M))
+}
+
+#[pyfunction]
 #[pyo3(signature = (seq, sodium_M=0.05, magnesium_M=0.003, dntp_M=0.0008, oligo_conc_M=0.25e-6))]
-fn duplex_tm(seq: &str, sodium_M: f64, magnesium_M: f64, dntp_M: f64, oligo_conc_M: f64) -> f64 {
+fn duplex_tm(
+    seq: &str,
+    sodium_M: f64,
+    magnesium_M: f64,
+    dntp_M: f64,
+    oligo_conc_M: f64,
+) -> PyResult<f64> {
+    require_nonempty(seq.as_bytes())?;
     let free_mg = (magnesium_M - dntp_M).max(0.0);
-    melting_temperature(seq, oligo_conc_M, sodium_M, free_mg)
+    Ok(tm_raw(seq, oligo_conc_M, sodium_M, free_mg))
 }
 
 #[pymodule]

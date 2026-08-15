@@ -143,6 +143,39 @@ try:
 except ValueError:
     out["tc_err"].append("ValueError")
 
+# ── review-driven edge parity (Emilio's PR review) ────────────────────────
+# complement kwarg: accepted and ignored by both engines
+out["dh_ds_complement"] = [
+    nn_dna.duplex_dh_ds(s) == nn_dna.duplex_dh_ds(s, complement="NNNN")
+    for s in BASES[:500]
+]
+# empty input must raise IndexError("string index out of range") identically
+out["empty_err"] = []
+for fn in (nn_dna.duplex_dh_ds, nn_dna.duplex_dg,
+           nn_dna.melting_temperature, nn_dna.duplex_tm):
+    try:
+        fn("")
+        out["empty_err"].append(None)
+    except Exception as e:
+        out["empty_err"].append(f"{type(e).__name__}: {e}")
+# tan_chen int()-style truncation of float n_pairs + exact error text
+out["tc_float"] = salt.tan_chen_helix_dg(6.9, 0.1, 1e-3, "dna")
+try:
+    salt.tan_chen_helix_dg(5.9, 0.1, 1e-3, "dna")
+    out["tc_float_err"] = None
+except ValueError as e:
+    out["tc_float_err"] = str(e)
+try:
+    salt.tan_chen_helix_dg(float("nan"), 0.1, 0.0)
+    out["tc_nan_err"] = None
+except (ValueError, OverflowError) as e:
+    out["tc_nan_err"] = f"{type(e).__name__}: {e}"
+try:
+    salt.tan_chen_helix_dg(float("inf"), 0.1, 0.0)
+    out["tc_inf_err"] = None
+except (ValueError, OverflowError) as e:
+    out["tc_inf_err"] = f"{type(e).__name__}: {e}"
+
 json.dump(out, sys.stdout)
 """
 
@@ -282,3 +315,45 @@ def test_tan_chen_error_parity():
     assert ORACLE["tc_err"][2] == "ValueError"
     with pytest.raises(ValueError):
         native.tan_chen_helix_dg(8, 0.1, 0.0, "dna-rna")
+
+
+# ── review-driven edge parity ─────────────────────────────────────────────────
+
+
+def test_complement_kwarg_accepted_and_ignored():
+    """duplex_dh_ds(seq, complement=None) must accept callers passing the arg
+    (public API) while it provably changes nothing."""
+    import pytest as _pt
+    for i, s in enumerate(SEQ[:500]):
+        a = native.duplex_dh_ds(s)
+        b = native.duplex_dh_ds(s, complement="NNNN")
+        assert _same(a[0], b[0]) and _same(a[1], b[1])
+        assert ORACLE["dh_ds_complement"][i] is True
+
+
+def test_empty_input_raises_indexerror():
+    """Empty sequence must raise IndexError('string index out of range') on all
+    four public entry points, exactly like the Python _initiation path."""
+    for fn, want in zip(
+        (native.duplex_dh_ds, native.duplex_dg,
+         native.melting_temperature, native.duplex_tm),
+        ORACLE["empty_err"],
+    ):
+        assert want == "IndexError: string index out of range"
+        import pytest as _pt
+        with _pt.raises(IndexError) as ei:
+            fn("")
+        assert str(ei.value) == "string index out of range", (fn, ei.value)
+
+
+def test_tan_chen_float_truncation_and_messages():
+    assert _same(ORACLE["tc_float"], native.tan_chen_helix_dg(6.9, 0.1, 1e-3, "dna"))
+    with pytest.raises(ValueError) as ei:
+        native.tan_chen_helix_dg(5.9, 0.1, 1e-3, "dna")
+    assert str(ei.value) == ORACLE["tc_float_err"]
+    with pytest.raises(ValueError) as ei:
+        native.tan_chen_helix_dg(float("nan"), 0.1, 0.0)
+    assert str(ei.value) == ORACLE["tc_nan_err"].split(": ", 1)[1]
+    with pytest.raises(OverflowError) as ei:
+        native.tan_chen_helix_dg(float("inf"), 0.1, 0.0)
+    assert str(ei.value) == ORACLE["tc_inf_err"].split(": ", 1)[1]

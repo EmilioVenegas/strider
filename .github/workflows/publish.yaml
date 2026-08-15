@@ -5,9 +5,32 @@ on:
     types: [published]
 
 jobs:
+  wheels:
+    name: Native abi3 wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # setuptools-scm needs full history + tags
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build abi3 wheel (strider._native inside)
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_BUILD: "cp38-abi3"
+          CIBW_SKIP: "*-musllinux*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
   pypi-publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
+    needs: wheels
     environment:
       name: pypi
       url: https://pypi.org/p/strider-dna  # PyPI package name
@@ -31,6 +54,13 @@ jobs:
 
       - name: Build a binary wheel and a source tarball
         run: python -m build
+
+      - name: Download native wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
