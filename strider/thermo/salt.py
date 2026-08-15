@@ -262,3 +262,22 @@ def _mixed_correction(fGC: float, sodium_M: float, magnesium_M: float, n_bp: int
     """
     na_eq = sodium_M + 0.120 * math.sqrt(magnesium_M * 1000.0)  # mM → back to M
     return _na_correction(fGC, na_eq)
+
+
+# ── optional Rust accelerator ──────────────────────────────────────────────
+# ``strider._native`` re-implements these scalar corrections in Rust (see
+# ``native/`` in the source tree; build with ``scripts/build_native.sh``).
+# Implementations are bit-compatible — the Python definitions above remain
+# as the fallback when the extension is absent, and as the oracle for the
+# parity test-suite (``tests/test_native_parity.py``).  Speed matters here:
+# ``dg_per_bp_salt`` is called per base pair inside the folding DP loops.
+try:
+    from strider import _native as _n
+
+    owczarzy_tm_correction = _n.owczarzy_tm_correction
+    na_correction_dg = _n.na_correction_dg
+    duplex_salt_dg = _n.duplex_salt_dg
+    dg_per_bp_salt = _n.dg_per_bp_salt
+    tan_chen_helix_dg = _n.tan_chen_helix_dg
+except ImportError:  # pragma: no cover - extension absent (pure-Python env)
+    _n = None

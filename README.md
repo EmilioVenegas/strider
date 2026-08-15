@@ -149,6 +149,31 @@ pip install strider-dna[full]     # all of the above
 PyTorch is **not** required for the core library; it is pulled in only by the `[diff]`
 (or `[full]`) extra, for the differentiable design API.
 
+### Native acceleration (`strider._native`, optional)
+
+Importers and any downstream app automatically use a Rust-compiled hot path for
+the two most-called kernels — the duplex/Tm walk of `strider.thermo.nn_dna`
+(`melting_temperature`, `duplex_tm`, `duplex_dg`, …) and the scalar salt
+corrections of `strider.thermo.salt` (`dg_per_bp_salt` runs per base pair
+inside the folding DP). When the extension is missing (no Rust toolchain at
+build time), strider falls back to the bit-compatible pure-Python code — the
+API and outputs stay identical, just slower. Parity is enforced by
+`tests/test_native_parity.py` (10k-sequence fuzz sweep, ≤ 1e-9 tolerance).
+
+```bash
+pip install .              # builds strider._native if cargo is present
+./scripts/build_native.sh  # dev-only shortcut: cargo build → strider/_native.abi3.so
+python scripts/bench_native.py   # benchmark table python vs native vs primer3
+```
+
+Measured on `scripts/bench_native.py` (3000 oligos, qPCR-like salt):
+
+| call                          | python   | native  | speedup            |
+|-------------------------------|----------|---------|--------------------|
+| `melting_temperature` ×3000   | 18.68 ms | 1.21 ms | **15.4×**          |
+| `dg_per_bp_salt` ×20000       | 5.21 ms  | 1.59 ms | 3.3×               |
+| primer3 `calc_tm` (C) ×3000   | 5.49 ms  | —       | native is **4.5×** faster than primer3's C extension |
+
 > **PyTorch is optional.** Importing `strider` and using the full thermodynamics, design,
 > tube, and circuit APIs works **without** PyTorch installed. Only the differentiable
 > components, `DifferentiableDesigner` and `DiffObjective`, need it. They are imported

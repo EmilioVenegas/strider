@@ -41,3 +41,36 @@ jobs:
         COLLECTED=$(pytest tests/ -m "slow or not slow" --co -q 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1)
         echo "Collected $COLLECTED tests"
         test "$COLLECTED" -ge 490
+
+  native-parity:
+    name: Native extension (build + bit-parity)
+    runs-on: ubuntu-latest
+    # Proves that (a) pip actually builds strider._native (the
+    # ext-modules/schema path) and (b) the Rust hot paths stay bit-compatible
+    # with their Python fallbacks — the matrix-less sibling of the main job,
+    # which validates the pure-Python path alone.
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # setuptools-scm needs the tags to derive the build version
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e . pytest setuptools-rust
+
+    - name: Assert strider._native built and imports
+      run: |
+        python -c "import strider._native; print(strider._native.melting_temperature('ATGCGTACGATCGATCGATC'))"
+
+    - name: Run native parity suite (Rust vs Python, 10k-sequence fuzz)
+      run: |
+        pytest tests/test_native_parity.py -v

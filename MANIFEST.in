@@ -1,0 +1,5 @@
+# sdist must contain the Rust accelerator sources so `pip install` from sdist
+# can build strider._native; build artifacts stay out.
+recursive-include native *
+recursive-exclude native/target *
+global-exclude *.so
