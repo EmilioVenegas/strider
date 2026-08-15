@@ -265,6 +265,7 @@ def subopt_structures(
     max_structures: int = 200,
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
+    dangles: int = 0,
 ) -> list[tuple[str, float, list[tuple[int, int]]]]:
     """
     Enumerate suboptimal structures within ``gap`` kcal/mol of the MFE.
@@ -305,9 +306,9 @@ def subopt_structures(
 
     T = celsius + 273.15
     dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
-    V, W, WM, WM1, energy_fns = _build_mfe_matrices(seq, T, material, nicks, dg_salt)
+    V, W, WM, WM1, energy_fns = _build_mfe_matrices(seq, T, material, nicks, dg_salt, dangles)
     (can, spans, inter, hairpin_e, stack_e, il_e, terminal_e,
-     ml_a, ml_b, ml_c) = energy_fns
+     ml_a, ml_b, ml_c, ext_e) = energy_fns
 
     if n == 1:
         return [(_to_dot_bracket([], n, nicks, sep_char), 0.0, [])]
@@ -426,12 +427,13 @@ def subopt_structures(
         for k in range(i + 1, j + 1):
             if V[i][k] >= INF:
                 continue
+            ext = ext_e(i, k) if dangles else 0.0
             rest_lb = W[k + 1][j] if k + 1 <= j else 0.0
             if V[i][k] + rest_lb > cap + EPS:
                 continue
-            for vp, ve in sub_V(i, k, cap - rest_lb):
-                for rp, re in sub_W(k + 1, j, cap - ve):
-                    yield vp | rp, ve + re
+            for vp, ve in sub_V(i, k, cap - rest_lb - ext):
+                for rp, re in sub_W(k + 1, j, cap - ve - ext):
+                    yield vp | rp, ve + re + ext
 
     # Drive the enumeration; deduplicate grammar-ambiguous repeats (keep min E).
     seen: dict[frozenset, float] = {}

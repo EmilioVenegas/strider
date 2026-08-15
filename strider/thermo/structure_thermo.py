@@ -63,10 +63,17 @@ def parse_hairpin_pairs(structure: str):
     return pairs
 
 
-def _sum_elements(seq: str, pairs, material: str, T: float) -> float:
+def _sum_elements(seq: str, pairs, material: str, T: float, dangles: int = 0) -> float:
     """Sum per-element energy for a single hairpin using the engine's own
     decomposition.  Whichever tables are active (via ``param_context``) decide
-    whether this returns ΔG or ΔH."""
+    whether this returns ΔG or ΔH.
+
+    ``dangles``: ``0`` (default) = historical behavior; ``2`` = dangling-end
+    stacking at the hairpin's closing pair — the best *negative* of the
+    5′ dangle (tail base at ``i_out - 1``) or 3′ dangle (``j_out + 1``) on the
+    same strand.  One dangle per exterior stem, matching the empirical
+    ViennaRNA d1/d2 outer-loop behavior for single-stem structures (verified
+    on a 25-case flank grid); mirrors :func:`strider.structure.mfe.fold_mfe`."""
     total = 0.0
     for k in range(len(pairs) - 1):
         i, j = pairs[k]
@@ -78,35 +85,60 @@ def _sum_elements(seq: str, pairs, material: str, T: float) -> float:
             total += _interior_bulge_energy(seq, i, j, ip, jp, nl, nr, material)
     il, jl = pairs[-1]
     total += _hairpin_loop_energy(seq, il, jl, material, T)
+
+    if dangles == 2:
+        if material.lower() == "dna":
+            from strider.thermo.parameters_dna import DANGLE_3, DANGLE_5
+        else:
+            from strider.thermo.parameters_rna import DANGLE_3, DANGLE_5
+        dangle_5 = lookup_table("dangle_5", DANGLE_5)
+        dangle_3 = lookup_table("dangle_3", DANGLE_3)
+        io, jo = pairs[0]
+        best = 0.0
+        if io - 1 >= 0:
+            d5 = dangle_5.get(seq[io] + seq[jo] + seq[io - 1])
+            if d5 is not None and d5 < best:
+                best = d5
+        if jo + 1 < len(seq):
+            d3 = dangle_3.get(seq[jo - 1] + seq[jo] + seq[jo + 1])
+            if d3 is not None and d3 < best:
+                best = d3
+        return total + best
     return total
 
 
 def structure_free_energy(seq: str, structure: str, material: str = "dna",
-                          paramset=None) -> float | None:
+                          paramset=None, dangles: int = 0) -> float | None:
     """ΔG (kcal/mol) of a folded hairpin from the ΔG tables.  Reproduces
     ``fold_mfe`` energy exactly for single hairpins."""
     pairs = parse_hairpin_pairs(structure)
     if pairs is None:
         return None
+    if isinstance(paramset, str):
+        from strider.thermo._param_context import _resolve_name
+        paramset = _resolve_name(paramset)
     if paramset is not None:
         with param_context(paramset):
-            return _sum_elements(seq, pairs, material, T_REF_K)
-    return _sum_elements(seq, pairs, material, T_REF_K)
+            return _sum_elements(seq, pairs, material, T_REF_K, dangles)
+    return _sum_elements(seq, pairs, material, T_REF_K, dangles)
 
 
 def structure_enthalpy(seq: str, structure: str, material: str = "dna",
-                        paramset=None) -> float | None:
+                        paramset=None, dangles: int = 0) -> float | None:
     """ΔH (kcal/mol) of a folded hairpin, via the same walk run against the ΔH
     tables.  ``paramset`` defaults to the native set for ``material``."""
     pairs = parse_hairpin_pairs(structure)
     if pairs is None:
         return None
+    if isinstance(paramset, str):
+        from strider.thermo._param_context import _resolve_name
+        paramset = _resolve_name(paramset)
     if paramset is None:
         from strider.thermo.parameters import load_parameters
         paramset = load_parameters("native") if material == "dna" \
             else load_parameters("native-rna")
     with param_context(_TableView(paramset.dH)):
-        return _sum_elements(seq, pairs, material, T_REF_K)
+        return _sum_elements(seq, pairs, material, T_REF_K, dangles)
 
 
 def parse_dimer_pairs(structure: str | list[tuple[int, int]], n1: int):
@@ -229,6 +261,9 @@ def structure_free_energy_dimer(
     junction at ``seq1_len``.
     """
     pairs = parse_dimer_pairs(structure, seq1_len)
+    if isinstance(paramset, str):
+        from strider.thermo._param_context import _resolve_name
+        paramset = _resolve_name(paramset)
     if paramset is not None:
         with param_context(paramset):
             return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K)
@@ -245,6 +280,9 @@ def structure_enthalpy_dimer(
     """ΔH (kcal/mol) of a bimolecular duplex, via the same walk run against the
     ΔH tables.  ``paramset`` defaults to the native set for ``material``."""
     pairs = parse_dimer_pairs(structure, seq1_len)
+    if isinstance(paramset, str):
+        from strider.thermo._param_context import _resolve_name
+        paramset = _resolve_name(paramset)
     if paramset is None:
         from strider.thermo.parameters import load_parameters
         paramset = load_parameters("native") if material == "dna" \

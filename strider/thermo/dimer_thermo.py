@@ -320,6 +320,7 @@ def dimer_thermo(
     structure: str | list[tuple[int, int]] | None = None,
     strand_conc_M: float = 250e-9,
     salt_model: str = "auto",
+    paramset=None,
 ) -> DimerThermo:
     """
     Two-state thermodynamics (Tm, ΔH, ΔS, ΔG₃₇) for a bimolecular duplex.
@@ -335,6 +336,10 @@ def dimer_thermo(
         If omitted, the MFE inter-strand structure is predicted.
     strand_conc_M : total strand concentration in molar.
     salt_model : closed-state salt correction; see :func:`strider.thermo.hairpin.hairpin_thermo`.
+    paramset : optional :class:`~strider.thermo.parameters.ParameterSet` (or a
+        name resolved via :func:`~strider.thermo.parameters.load_parameters`)
+        used both to predict the MFE helix and to score it.  When ``None``
+        (default), the native parameter set for ``material`` is used.
 
     Raises
     ------
@@ -362,7 +367,8 @@ def dimer_thermo(
     pairs = None
 
     if structure is None:
-        engine = ThermoEngine(material=material, celsius=25.0, sodium=sodium_M, magnesium=magnesium_M)
+        engine = ThermoEngine(material=material, celsius=25.0, sodium=sodium_M,
+                              magnesium=magnesium_M, parameter_set=paramset)
         mfe = _dimer_mfe(seq1, seq2, engine=engine)
         struct = mfe.structure
     elif isinstance(structure, str):
@@ -377,8 +383,8 @@ def dimer_thermo(
         pairs = parse_dimer_pairs(struct, n1)
     n = len(pairs)
 
-    dG37_1M = structure_free_energy_dimer(seq, n1, struct, material)
-    dH = structure_enthalpy_dimer(seq, n1, struct, material)
+    dG37_1M = structure_free_energy_dimer(seq, n1, struct, material, paramset=paramset)
+    dH = structure_enthalpy_dimer(seq, n1, struct, material, paramset=paramset)
 
     # Bimolecular duplex initiation (nucleation), once per duplex.  Added to both
     # ΔG37 and ΔH so that ΔS = (ΔH − ΔG37)/T_ref picks up ΔS_init ≈ −5.7 cal/mol/K,
@@ -429,6 +435,7 @@ def dimer_thermo_subopt(
     material: str = "dna",
     strand_conc_M: float = 250e-9,
     salt_model: str = "auto",
+    paramset=None,
 ) -> list[DimerThermo]:
     """
     Return the top ``n`` sub-optimal antiparallel dimer alignments.
@@ -448,6 +455,9 @@ def dimer_thermo_subopt(
     material : ``"dna"`` or ``"rna"``.
     strand_conc_M : total strand concentration in molar.
     salt_model : closed-state salt correction; see :func:`dimer_thermo`.
+    paramset : optional :class:`~strider.thermo.parameters.ParameterSet` (or a
+        name) used both to predict the alignments and to score them — see
+        :func:`dimer_thermo`.
     """
     from strider.thermo._param_context import param_context
     from strider.thermo.engine import ThermoEngine
@@ -457,7 +467,8 @@ def dimer_thermo_subopt(
     seq = seq1_clean + seq2_clean
 
     engine = ThermoEngine(
-        material=material, celsius=25.0, sodium=sodium_M, magnesium=magnesium_M
+        material=material, celsius=25.0, sodium=sodium_M, magnesium=magnesium_M,
+        parameter_set=paramset,
     )
     override = engine.params if engine._uses_custom_params() else None
 
@@ -486,6 +497,7 @@ def dimer_thermo_subopt(
             structure=structure,
             strand_conc_M=strand_conc_M,
             salt_model=salt_model,
+            paramset=paramset,
         )
         results.append(dt)
 
@@ -502,6 +514,7 @@ def dimer_tm(
     material: str = "dna",
     strand_conc_M: float = 250e-9,
     salt_model: str = "auto",
+    paramset=None,
 ) -> float:
     """Melting temperature (°C) of the predicted duplex. See :func:`dimer_thermo`."""
     return dimer_thermo(
@@ -511,6 +524,7 @@ def dimer_tm(
         material=material,
         strand_conc_M=strand_conc_M,
         salt_model=salt_model,
+        paramset=paramset,
     ).tm_celsius
 
 

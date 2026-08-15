@@ -75,6 +75,7 @@ class ThermoEngine:
         cache: "DiskCache | None" = None,
         correction_model: Callable[[str], float] | None = None,
         parameter_set: "str | ParameterSet | None" = None,
+        dangles: int = 0,
     ) -> None:
         self.material = material
         self.celsius = celsius
@@ -85,6 +86,9 @@ class ThermoEngine:
         self._backend = self._resolve_backend(backend)
         self._parameter_set_arg = parameter_set
         self._params_cache: "ParameterSet | None" = None
+        if dangles not in (0, 2):
+            raise ValueError("dangles must be 0 (no exterior dangling ends) or 2 (VR dangles=2)")
+        self.dangles = dangles
 
     @property
     def params(self) -> "ParameterSet":
@@ -241,6 +245,7 @@ class ThermoEngine:
                     strands[0], gap=gap, celsius=self.celsius, material=self.material,
                     max_structures=max_structures,
                     sodium_M=self.sodium, magnesium_M=self.magnesium,
+                    dangles=self.dangles,
                 )
             n = len(strands)
             # Widen the structural enumeration so suboptimals that the
@@ -606,12 +611,13 @@ class ThermoEngine:
                 seq = sequences[0] if sequences else ""
                 structure, energy, pairs = fold_mfe(
                     seq, self.celsius, self.material, self.sodium, self.magnesium,
+                    dangles=self.dangles,
                 )
                 order = tuple(range(len(sequences)))
             elif len(sequences) <= DEFAULT_MAX_STRANDS:
                 cf = fold_complex(
                     list(sequences), self.celsius, self.material,
-                    self.sodium, self.magnesium,
+                    self.sodium, self.magnesium, dangles=self.dangles,
                 )
                 structure, energy, pairs, order = (
                     cf.structure, cf.energy, cf.pairs, cf.order,
@@ -621,7 +627,7 @@ class ThermoEngine:
                 order = tuple(range(len(sequences)))
                 structure, energy, pairs = fold_mfe(
                     "&".join(sequences), self.celsius, self.material,
-                    self.sodium, self.magnesium,
+                    self.sodium, self.magnesium, dangles=self.dangles,
                 )
         seq = "&".join(sequences[i] for i in order)
         energy += self._mfe_sigma_correction(sequences, self.celsius)
@@ -794,7 +800,7 @@ class ThermoEngine:
             ps_name = getattr(ps_arg, "name", "custom")
         raw = (
             f"{op}|{self.material}|{self.celsius}|{self.sodium}|{self.magnesium}|"
-            f"{ps_name}|{'|'.join(sequences)}"
+            f"{ps_name}|d{self.dangles}|{'|'.join(sequences)}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()
 
