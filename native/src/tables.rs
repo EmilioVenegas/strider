@@ -12,8 +12,14 @@ pub mod dna {
 }
 
 /// 256-entry ASCII base → 2-bit code table (U folded to T).
+///
+/// UNKNOWN bytes map to `u32::MAX`, NOT to 3 (T): a base like 'N' must produce
+/// a packed key that *misses* every generated table entry (same as Python's
+/// `dict.get(key, default)` returning the default), never a false T-lookup.
+/// All valid table keys are ≤ 8 ACGT bases → packed codes ≤ 65535, so any
+/// code containing the MAX sentinel bit is guaranteed to miss.
 pub static CODE_TABLE: [u32; 256] = {
-    let mut t = [3u32; 256];
+    let mut t = [u32::MAX; 256];
     t[b'A' as usize] = 0;
     t[b'a' as usize] = 0;
     t[b'C' as usize] = 1;

@@ -34,7 +34,21 @@ rng = random.Random(2024)
 
 
 def rand_seq():
-    return "".join(rng.choices("ACGT", k=rng.randint(4, 40)))
+    """Random ACGT sequence; ~15% of calls sprinkle degenerate IUPAC bases.
+
+    Degenerate bases (N, R, Y, S, W, K, M, B, D, H, V) must trigger the
+    alphabet guard in the wrapper (fall back to Python), since the Rust
+    DP would otherwise pack them as T and hit wrong table entries.
+    """
+    n = rng.randint(4, 40)
+    s = "".join(rng.choices("ACGT", k=n))
+    if rng.random() < 0.15:
+        n_degenerate = rng.randint(1, 3)
+        degen = "N R Y S W K M B D H V".split()
+        for _ in range(n_degenerate):
+            pos = rng.randint(0, len(s) - 1)
+            s = s[:pos] + rng.choice(degen) + s[pos + 1:]
+    return s
 
 
 @contextmanager
@@ -108,12 +122,142 @@ def test_dimer_thermo_end_to_end_parity():
     assert bad == 0, f"{bad}/300 end-to-end mismatches, first: {first}"
 
 
+def _same_candidates(out, py):
+    if len(out) != len(py):
+        return False
+    return all(
+        math.isclose(float(e1), float(e2), rel_tol=0.0, abs_tol=TOL) and p1 == p2
+        for (e1, p1), (e2, p2) in zip(out, py)
+    )
+
+
 def test_fallback_guards():
-    """RNA material must keep using the Python path."""
+    """Non-native-eligible inputs must use the Python path: RNA material."""
     a, b = "GCGCGCGC", "GCGCGCGC"
-    out = dt_mod._dimer_mfe_candidates(a, b, material="rna")
-    py = dt_mod._dimer_mfe_candidates_py(a, b, material="rna")
-    assert len(out) == len(py)
-    for (e1, p1), (e2, p2) in zip(out, py):
-        assert math.isclose(float(e1), float(e2), rel_tol=0.0, abs_tol=TOL)
-        assert p1 == p2
+    assert _same_candidates(
+        dt_mod._dimer_mfe_candidates(a, b, material="rna"),
+        dt_mod._dimer_mfe_candidates_py(a, b, material="rna"),
+    )
+
+
+def test_fallback_guard_param_override():
+    """Active param_context must force the Python path (native = baked tables)."""
+    from strider.thermo._param_context import _param_override
+
+    a, b = "GCGCGCGC", "GCGCGCGC"
+
+    class _EmptyOverride:
+        dG = {}  # empty → lookup_table returns module-constant fallback
+
+    token = _param_override.set(_EmptyOverride())
+    try:
+        assert _same_candidates(
+            dt_mod._dimer_mfe_candidates(a, b, material="dna"),
+            dt_mod._dimer_mfe_candidates_py(a, b, material="dna"),
+        )
+    finally:
+        _param_override.reset(token)
+
+
+def test_fallback_guard_custom_engine_params():
+    """Engine with custom ParameterSet must force the Python path."""
+    a, b = "GCGCGCGC", "GCGCGCGC"
+
+    class _CustomEngine:
+        material = "dna"
+        celsius = 37.0
+        sodium = 0.05
+        magnesium = 0.0092
+        def _uses_custom_params(self): return True
+
+    assert _same_candidates(
+        dt_mod._dimer_mfe_candidates(a, b, engine=_CustomEngine()),
+        dt_mod._dimer_mfe_candidates_py(a, b, engine=_CustomEngine()),
+    )
+
+
+def test_fallback_guard_degenerate_alphabet():
+    """Sequences with degenerate IUPAC bases must fall back to Python."""
+    # 'N' would pack as T and hit a wrong table entry on the Rust side.
+    for a, b in [
+        ("ACGNACGT", "ACGTACGT"),
+        ("ACGTACGN", "ACGTACGT"),
+        ("NCGT", "ACGT"),
+        ("ACGT", "NCGT"),
+        ("ACRNACGT", "ACGTACGT"),
+    ]:
+        assert _same_candidates(
+            dt_mod._dimer_mfe_candidates(a, b, material="dna"),
+            dt_mod._dimer_mfe_candidates_py(a, b, material="dna"),
+        ), f"degenerate base divergence: {a!r} vs {b!r}"
+
+
+def test_native_raw_degenerate_matches_python():
+    """Direct strider._native call on degenerate sequences matches Python.
+
+    The wrapper guards alphabet, but if anyone calls the raw export directly,
+    the CODE_TABLE sentinel (u32::MAX) must make every table lookup miss —
+    same as Python's dict.get(key, default) returning the default.
+    """
+    cases = [
+        ("ACGNACGT", "ACGTACGT"),
+        ("ACGTACGN", "ACGTACGT"),
+        ("NCGT", "ACGT"),
+        ("ACGT", "NCGT"),
+        ("ACRNACGT", "ACGTACGT"),
+        ("ACBNACDT", "ACGT", ),
+    ]
+    for a, b in cases:
+        py = dt_mod._dimer_mfe_candidates_py(a, b, material="dna")
+        rs = [
+            (float(e), [tuple(map(int, pr)) for pr in pairs])
+            for e, pairs in native.dimer_mfe_candidates(a, b)
+        ]
+        assert _same_candidates(rs, py), (
+            f"raw native diverged from Python on degenerate {a!r} vs {b!r}"
+        )
+
+
+def test_tables_dna_regenerated_matches_committed():
+    """Regenerate tables_dna.rs from parameters_dna and compare byte-for-byte.
+
+    Orthogonal to the DP fuzz: catches silent drift when parameters_dna.py
+    is edited (e.g. new salt/dangle work) but the generated Rust tables were
+    not regenerated.  Does not require the native extension — codegen imports
+    only strider.thermo.parameters_dna.
+    """
+    import pathlib
+    import subprocess
+    import sys
+    import tempfile
+
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    committed = repo_root / "native" / "src" / "tables_dna.rs"
+    assert committed.exists(), f"committed tables not found: {committed}"
+
+    with tempfile.NamedTemporaryFile(suffix=".rs", mode="w", delete=False) as f:
+        tmp_path = f.name
+    try:
+        subprocess.run(
+            [sys.executable, str(repo_root / "native" / "codegen_tables.py"), tmp_path],
+            check=True, capture_output=True, text=True,
+        )
+        regenerated = pathlib.Path(tmp_path).read_text()
+    finally:
+        pathlib.Path(tmp_path).unlink(missing_ok=True)
+
+    expected = committed.read_text()
+    if regenerated != expected:
+        # Find the first differing line for a readable diff hint.
+        for i, (a, b) in enumerate(zip(expected.splitlines(), regenerated.splitlines())):
+            if a != b:
+                pytest.fail(
+                    f"tables_dna.rs is stale at line {i + 1}.\n"
+                    f"  committed:   {a[:120]}\n"
+                    f"  regenerated: {b[:120]}\n"
+                    f"Run: python native/codegen_tables.py"
+                )
+        pytest.fail(
+            f"tables_dna.rs length mismatch: committed {len(expected)} vs "
+            f"regenerated {len(regenerated)} — run: python native/codegen_tables.py"
+        )

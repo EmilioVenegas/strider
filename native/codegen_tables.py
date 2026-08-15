@@ -8,8 +8,10 @@ packs each string key into a 2-bit-per-base code and emits a sorted array per
 table so the Rust side can binary-search at lookup time.
 
 The generated file is committed to the repository (like the package's own
-``strider/thermo/_dna_enthalpy_generated.py``) and a CI/pytest check compares
-it byte-for-byte.  Regenerate with::
+``strider/thermo/_dna_enthalpy_generated.py``); a pytest staleness check
+(``test_tables_dna_regenerated_matches_committed`` in
+``tests/test_native_dp_parity.py``) regenerates and compares byte-for-byte.
+Regenerate with::
 
     python native/codegen_tables.py
 

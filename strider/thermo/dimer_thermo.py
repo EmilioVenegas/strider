@@ -554,7 +554,11 @@ try:
                     and _param_override.get() is None:
                 s1 = seq1.upper().replace("U", "T")
                 s2 = (seq2 if seq2 is not None else seq1).upper().replace("U", "T")
-                if s1 and s2:
+                # Alphabet guard: non-ACGT bases (N, R, Y, …) would pack as T
+                # on the Rust side and hit wrong table entries where Python's
+                # dict.get(key, default) misses. Fall back to Python — the
+                # native DP is only exact for pure ACGT + U sequences.
+                if s1 and s2 and set(s1) <= set("ACGT") and set(s2) <= set("ACGT"):
                     return [
                         (float(e), [tuple(map(int, pr)) for pr in pairs])
                         for e, pairs in _n.dimer_mfe_candidates(s1, s2)
