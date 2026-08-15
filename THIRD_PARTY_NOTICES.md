@@ -75,6 +75,22 @@ These are consumed by scripts under `scripts/` to *generate* the table modules
 above. They are not shipped: the `data/` directory is `.gitignore`d in its
 entirety and excluded from the wheel.
 
+- **ViennaRNA `dna_mathews2004.par`** — used by
+  `scripts/generate_mathews2004_params.py` to transcribe Mathews et al. 1999
+  DNA ΔG₃₇ and ΔH tables into
+  `strider/thermo/parameters/mathews2004-dna.json`. The JSON is regenerated
+  with ViennaRNA installed at development time (`pip install ViennaRNA`) and
+  verified structure-by-structure against ViennaRNA's own `eval_structure`
+  at `dangles=0` (7/7 exact). The transcribed values are primary literals of
+  Mathews D.H., Sabina J., Zuker M., Turner D.H. (1999) *J. Mol. Biol.*
+  **288**:911-940 — physical measurements, not copyrightable expression —
+  so the JSON retains only those numeric constants (as does the analogous
+  adoption of the same parameter set in e.g. NUPACK, RNAstructure, and
+  Biopython). Neither the `.par` file nor ViennaRNA (© Institute for
+  Theoretical Chemistry, University of Vienna) is redistributed or required
+  at runtime by strider — `strider/thermo/parameters/mathews2004-dna.json`
+  is self-contained static data under the package's MIT license.
+
 - **ViennaRNA `rna_turner2004.par`** — used by
   `scripts/generate_rna_enthalpy_tables.py` to transcribe Turner-2004 RNA loop
   enthalpies. Fetch on demand:
