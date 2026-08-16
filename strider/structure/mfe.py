@@ -132,9 +132,13 @@ def _build_mfe_matrices(seq, T, material, nicks, dg_salt, dangles=0):
         def ext_e(ko: int, jo: int) -> float:
             """Dangling stack at the exterior stem `(ko, jo)`: the best negative
             5′ dangle from the same-strand base at ``ko - 1`` or 3′ dangle from
-            ``jo + 1`` (flanks crossing a strand boundary are excluded)."""
+            ``jo + 1`` (a flank *separated* from the pair by a strand boundary
+            is excluded; a flank that starts a new strand still counts)."""
             best = 0.0
-            if ko - 1 >= 0 and ko not in nicks and (ko - 1) not in nicks:
+            # Contiguity to the pair's 5′ side only requires no boundary before
+            # ``ko``; a flank that *starts* a strand is still a valid dangle
+            # (mirrors the 3′ branch, which tests only jo + 1).
+            if ko - 1 >= 0 and ko not in nicks:
                 d5 = dangle_5.get(seq[ko] + seq[jo] + seq[ko - 1])
                 if d5 is not None and d5 < best:
                     best = d5

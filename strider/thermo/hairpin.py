@@ -211,13 +211,25 @@ def fraction_folded(
     Sequences with no stable hairpin fold at all → their melt is a flat zero;
     ``fraction_folded`` returns ``0.0`` for them (it used to raise ``ValueError``,
     which made every non-folding primer crash melt-curve analysis).
+
+    Only the no-base-pairs case maps to zero.  Caller-mistake conditions
+    (unknown ``salt_model``, bad ``material``, degenerate ΔS, multiloop MFE)
+    still raise instead of being silently flattened.
     """
-    try:
-        th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
-                            salt_model=salt_model, paramset=paramset,
-                            dangles=dangles)
-    except ValueError:
-        return 0.0
+    from strider.structure.mfe import fold_mfe
+
+    norm = seq.upper().replace("U", "T")
+    if paramset is not None:
+        from strider.thermo._param_context import param_context
+        with param_context(paramset):
+            struct_str, _, _ = fold_mfe(norm, 37.0, material, dangles=dangles)
+    else:
+        struct_str, _, _ = fold_mfe(norm, 37.0, material, dangles=dangles)
+    if "(" not in struct_str:
+        return 0.0  # no stable fold — flat melt curve
+    th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
+                        salt_model=salt_model, paramset=paramset,
+                        dangles=dangles, structure=struct_str)
     T = celsius + 273.15
     dG_T = th.dH - T * th.dS / 1000.0           # ΔG(T) of the closed state
     R = 1.987e-3

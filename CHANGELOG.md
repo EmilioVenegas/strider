@@ -5,6 +5,63 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Behavior Changes
+
+- **thermo:** `fraction_folded` returns 0.0 for non-folding sequences and no
+  longer swallows caller mistakes
+
+    The blanket `except ValueError` collapsed every failure (bad
+    ``salt_model`` choice, degenerate entropy, multiloop MFE) into a silent
+    ``0.0``.  The zero case is now decided from the MFE structure itself:
+    only a sequence with no base pairs in its MFE maps to ``0.0``; everything
+    else still raises.  This is a behavior change for
+    ``fraction_folded`` under invalid arguments.
+
+- **thermo:** `hairpin_thermo` accepts custom parameter sets, and the dimer
+  path gains a ``dangles`` flag
+
+    ``hairpin_thermo(paramset=...)`` now folds with the same parameter set it
+    scores with (previously the native set picked the structure while the
+    custom set scored it) and both ``hairpin_thermo`` and
+    ``fraction_folded`` accept a paramset name as well as an instance.
+    ``dimer_thermo`` / ``dimer_thermo_subopt`` / ``dimer_tm`` take
+    ``dangles=0|2`` matching the hairpin flag: each duplex terminus gathers
+    the negative dangling-end stacks adjacent to its outermost pair.
+    Note the changing default for ``_sum_dimer_elements``: exterior flank
+    contributions are now gated by the flag (``0`` = off), where they were
+    previously always included, so dimer ΔG/Tm for structures with dangling
+    flanks shift vs earlier releases.
+    Separate latent fix: enthalpy walks no longer ingest ΔG-valued dangle
+    tables (the dangle parameter tables are ΔG-only; the ΔH path now always
+    excludes them).
+
+- **thermo:** ``dangles`` is scoped to MFE/suboptimal results
+
+    ``ThermoEngine(dangles=...)`` no longer feeds the partition-function path:
+    the ensemble, ensemble-defect, differentiable and concentration-solving
+    code do not implement dangle semantics, and carrying the flag into the
+    pfunc cache key implied an effect that does not exist.  ``0`` vs ``2``
+    therefore changes ``mfe``/``subopt`` results only; ``pfunc`` is
+    bit-identical across flag states.
+
+- **structure:** exterior dangle rule no longer drops a valid strand-start
+  flank in ``fold_complex``/``fold_mfe``
+
+    The 5' branch of the exterior dangle walk tested
+    ``(ko - 1) not in nicks`` in addition to the required contiguity check
+    (``ko not in nicks``), discarding a legitimate 5' dangle whenever the
+    flanking base was the first base of a strand.
+
+### Documentation
+
+- **notices:** value-level confirmation for the `dna_mathews2004.par`
+  provenance claim (the 1999 and 2004 Vienna DNA sets differ: `ATAT` is
+  -0.8/-0.9 and `GT/CG` is +1.3/+1.2 respectively; the JSON carries the
+  2004-file markers). Citation: Mathews 1999 JMB 288:911-940 lineage plus
+  NNDB Turner & Mathews 2010.
+
 ## [1.2.1] - 2026-07-28
 
 ### Bug Fixes

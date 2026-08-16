@@ -40,7 +40,13 @@ _param_override: contextvars.ContextVar["ParameterSet | None"] = contextvars.Con
 def _resolve_name(name: str) -> "ParameterSet":
     """Resolve a parameter-set name (e.g. ``"mathews2004-dna"``) to its
     :class:`ParameterSet`.  Memoized so repeated overrides by name never
-    re-parse from disk on the hot path."""
+    re-parse from disk on the hot path.
+
+    Every caller receives the SAME cached instance.  It is read-only by
+    contract: never mutate ``.dG`` / ``.dH`` in place (a future temperature-
+    adjusted parameter set must be built as a new instance).  Currently
+    verified: the tree contains no in-place writes to a ParameterSet's tables.
+    """
     from strider.thermo.parameters import load_parameters
 
     return load_parameters(name)

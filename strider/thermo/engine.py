@@ -63,6 +63,14 @@ class ThermoEngine:
     backend  : 'auto' | 'native' | 'vienna'
     cache    : optional DiskCache for persistent memoization
     correction_model : optional callable(sequence) -> float for ML corrections
+    dangles  : exterior-stem dangling-end handling (0 or 2, default 0).
+        ``2`` = best single *negative* 5′/3′ dangle stack per exterior stem.
+        NOTE: this is **not** exactly ViennaRNA ``dangles=2``, which sums both
+        flanks unconditionally; on a 42-case grid the two-flank cases deviate
+        0.2-0.9 kcal/mol (38/42 within 0.4).  Scope: ``mfe`` and ``subopt``
+        only — the partition function (``pfunc``), ensemble defect matmul,
+        differentiable path and equilibrium solving always use the no-dangle
+        model regardless of this flag.
     """
 
     def __init__(
@@ -87,7 +95,11 @@ class ThermoEngine:
         self._parameter_set_arg = parameter_set
         self._params_cache: "ParameterSet | None" = None
         if dangles not in (0, 2):
-            raise ValueError("dangles must be 0 (no exterior dangling ends) or 2 (VR dangles=2)")
+            raise ValueError(
+                "dangles must be 0 (no exterior dangling ends) or 2 (best single "
+                "negative dangle per exterior stem; MFE/subopt only - not "
+                "identical to ViennaRNA dangles=2, see ThermoEngine docs)"
+            )
         self.dangles = dangles
 
     @property
@@ -798,9 +810,13 @@ class ThermoEngine:
             ps_name = ps_arg
         else:  # ParameterSet instance
             ps_name = getattr(ps_arg, "name", "custom")
+        # dangles is scoped to MFE-style results only (pfunc/ensemble explicitly
+        # ignores it, see __init__ docs); folding it into a pfunc cache key would
+        # imply an ensemble effect that does not exist.
+        dang = f"|d{self.dangles}" if op != "pfunc" else ""
         raw = (
             f"{op}|{self.material}|{self.celsius}|{self.sodium}|{self.magnesium}|"
-            f"{ps_name}|d{self.dangles}|{'|'.join(sequences)}"
+            f"{ps_name}{dang}|{'|'.join(sequences)}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()
 

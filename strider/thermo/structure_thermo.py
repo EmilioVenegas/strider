@@ -181,13 +181,21 @@ def parse_dimer_pairs(structure: str | list[tuple[int, int]], n1: int):
     return pairs
 
 
-def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float) -> float:
+def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float,
+                        dangles: int = 0) -> float:
     """Sum per-element ΔG/ΔH for a single nested bimolecular duplex.
 
     The walk uses the same stack/interior/bulge decomposition as the hairpin
     walk, but replaces the hairpin-loop term with terminal-pair / dangle
     contributions at both helix ends.  Whichever tables are active via
     :func:`param_context` decide whether the returned value is ΔG or ΔH.
+
+    ``dangles``: ``0`` (default) = no exterior dangling-end terms (matching
+    ``hairpin_thermo``); ``2`` = each helix terminus collects every negative
+    dangling-end stack adjacent to its outermost pair (both flanks, matching
+    the dimer DP's convention).  Dangle tables are ΔG₃₇-only — the ΔH walk
+    (``structure_enthalpy_dimer``) always passes ``0`` so ΔG numbers never
+    leak into an enthalpy sum.
 
     The bimolecular association ``JOIN_PENALTY`` is intentionally omitted here;
     it belongs in the concentration-dependent Tm calculation (via the ``ln(C)``
@@ -210,6 +218,14 @@ def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float)
         else:
             total += _interior_bulge_energy(seq, i, j, ip, jp, nl, nr, material)
 
+    i_out, j_out = pairs[0]
+    total += _terminal_pair_penalty(seq, i_out, j_out, material)
+    i_in, j_in = pairs[-1]
+    total += _terminal_pair_penalty(seq, i_in, j_in, material)
+
+    if dangles != 2:
+        return total
+
     if material == "dna":
         from strider.thermo.parameters_dna import (
             DANGLE_3, DANGLE_5,
@@ -221,8 +237,6 @@ def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float)
     dangle_5 = lookup_table("dangle_5", DANGLE_5)
     dangle_3 = lookup_table("dangle_3", DANGLE_3)
 
-    i_out, j_out = pairs[0]
-    total += _terminal_pair_penalty(seq, i_out, j_out, material)
     if i_out - 1 >= 0 and (i_out - 1) not in paired:
         d5 = dangle_5.get(seq[i_out] + seq[j_out] + seq[i_out - 1])
         if d5 is not None and d5 < 0:
@@ -232,8 +246,6 @@ def _sum_dimer_elements(seq: str, seq1_len: int, pairs, material: str, T: float)
         if d3 is not None and d3 < 0:
             total += d3
 
-    i_in, j_in = pairs[-1]
-    total += _terminal_pair_penalty(seq, i_in, j_in, material)
     if j_in - 1 >= seq1_len and (j_in - 1) not in paired:
         d5 = dangle_5.get(seq[j_in] + seq[i_in] + seq[j_in - 1])
         if d5 is not None and d5 < 0:
@@ -252,6 +264,7 @@ def structure_free_energy_dimer(
     structure: str | list[tuple[int, int]],
     material: str = "dna",
     paramset=None,
+    dangles: int = 0,
 ) -> float:
     """ΔG (kcal/mol) of a bimolecular duplex from the ΔG tables.
 
@@ -266,8 +279,10 @@ def structure_free_energy_dimer(
         paramset = _resolve_name(paramset)
     if paramset is not None:
         with param_context(paramset):
-            return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K)
-    return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K)
+            return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K,
+                                       dangles=dangles)
+    return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K,
+                               dangles=dangles)
 
 
 def structure_enthalpy_dimer(
@@ -288,4 +303,6 @@ def structure_enthalpy_dimer(
         paramset = load_parameters("native") if material == "dna" \
             else load_parameters("native-rna")
     with param_context(_TableView(paramset.dH)):
-        return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K)
+        # dangles stays 0 here on purpose: dangle tables are ΔG37-only and
+        # must never leak into an enthalpy sum (see _sum_dimer_elements).
+        return _sum_dimer_elements(seq, seq1_len, pairs, material, T_REF_K, dangles=0)
