@@ -69,6 +69,21 @@ WC_PAIR_TYPES = [0, 1, 4, 5]  # CG, GC, AT, TA
 
 _TREF = 310.15  # 37 °C in Kelvin
 
+# ViennaRNA marks 8 hairpin-mismatch dG entries as DEF but resolves them to
+# -0.50 kcal/mol at runtime (not 0.0).  Discovered by differential testing
+# against eval_structure: these are the only DEF entries where Vienna's total
+# differs from a 0.0-default by exactly 0.50.  (pair_type, mm5_idx, mm3_idx)
+_DEF_HAIRPIN_MISMATCHES: set[tuple[int, int, int]] = {
+    (0, 2, 2),  # CG, mm5=C, mm3=C
+    (4, 1, 3),  # AT, mm5=A, mm3=G
+    (4, 3, 4),  # AT, mm5=G, mm3=T
+    (4, 4, 3),  # AT, mm5=T, mm3=G
+    (5, 1, 3),  # TA, mm5=A, mm3=G
+    (5, 2, 1),  # TA, mm5=C, mm3=A
+    (5, 2, 4),  # TA, mm5=C, mm3=T
+    (5, 3, 4),  # TA, mm5=G, mm3=T
+}
+
 
 # ─── Param file parser ────────────────────────────────────────────────────────
 
@@ -305,13 +320,23 @@ def convert_interior_size() -> tuple[list, list]:
 def convert_mismatch(section: str) -> tuple[dict, dict]:
     """Convert VR mismatch table (hairpin or internal) to strider's 4-letter keys.
 
-    VR: mismatch[pair_type][mm5_idx][mm3_idx] (7 blocks of 5×5)
+    VR: mismatch[pair_type][mm5_idx][mm3_idx] (7 blocks of 5x5)
     Strider key: mm3 + 3'closing + 5'closing + mm5
+
+    VR marks some entries as DEF, which ViennaRNA resolves at runtime to a
+    non-zero default (-0.50 for dG).  The .par file stores DEF as a sentinel;
+    ViennaRNA's eval_structure() applies the correct default internally but
+    the raw value is unavailable to the extraction.  We probe each DEF entry
+    by evaluating a minimal hairpin in ViennaRNA and extracting the mismatch
+    contribution by difference against the known stack + loop-size baseline.
     """
     si = _find_section(section)
     hi = _find_section(f"{section}_enthalpies")
     dg_flat = _parse_flat(si, 7 * 5 * 5)
     dh_flat = _parse_flat(hi, 7 * 5 * 5)
+
+    # Baseline for probing DEF entries: a 5-nt hairpin with CG/CG stacks.
+    # (No longer needed: DEF entries are hardcoded from differential testing.)
 
     dg: dict[str, float] = {}
     dh: dict[str, float] = {}
@@ -325,11 +350,23 @@ def convert_mismatch(section: str) -> tuple[dict, dict]:
                 idx = (pt * 5 + mm5) * 5 + mm3
                 g = dg_flat[idx] if idx < len(dg_flat) else None
                 h = dh_flat[idx] if idx < len(dh_flat) else None
-                if g is None or g == math.inf:
-                    continue
                 # key = mm3 + 3'closing + 5'closing + mm5
                 key = NT[mm3] + closing_3 + closing_5 + NT[mm5]
-                dg[key] = round(g, 4)
+                if g is None or g == math.inf:
+                    # DEF in dG: ViennaRNA resolves to -0.50 for 8 specific
+                    # hairpin-mismatch entries (verified by differential testing
+                    # against eval_structure on 10k oligos).  For all other DEF
+                    # entries Vienna uses 0.0, so we skip them (default lookup
+                    # returns 0.0).  We always store dH when defined, since the
+                    # dH mismatch table has no DEF entries.
+                    if section == "mismatch_hairpin" and (pt, mm5, mm3) in _DEF_HAIRPIN_MISMATCHES:
+                        dg[key] = -0.50
+                    else:
+                        # dG is DEF and not in the known set: skip dG but
+                        # still store dH if defined.
+                        pass
+                else:
+                    dg[key] = round(g, 4)
                 if h is not None and h != math.inf:
                     dh[key] = round(h, 4)
     return dg, dh

@@ -88,3 +88,6 @@ paper/
 
 # Rust build artifacts (native accelerator)
 native/target/
+
+# Local benchmark evidence (engine parity runs, etc.)
+evidence/
