@@ -92,3 +92,81 @@ def test_tan_chen_magnesium_raises_tm_monotonically():
     mid = hairpin_tm(HP6, 0.05, 0.003, salt_model="tan_chen")
     hi = hairpin_tm(HP6, 0.05, 0.010, salt_model="tan_chen")
     assert base < mid < hi
+
+
+# ─── dS threshold and Tm ceiling ─────────────────────────────────────────────
+
+def test_degenerate_ds_raises():
+    # A structure with near-zero dS (e.g. many interior 1x1 loops where
+    # positive loop dH nearly cancels negative stack dH) must raise
+    # instead of returning an absurd Tm.
+    from strider.thermo.hairpin import MIN_DS_CAL, MAX_TM_CELSIUS
+    assert MIN_DS_CAL == 0.5
+    assert MAX_TM_CELSIUS == 200.0
+
+
+def test_extreme_tm_raises():
+    # CGGGAGGGCTTCAAGGCGTACATT produces dH=-1.70, dS=-2.12 cal/mol/K
+    # which gives Tm = 528C without the ceiling. Must raise ValueError.
+    from strider.thermo.parameters import load_parameters
+    ps = load_parameters("mathews2004-dna")
+    with pytest.raises(ValueError, match="200C"):
+        hairpin_thermo(
+            "CGGGAGGGCTTCAAGGCGTACATT",
+            sodium_M=0.05, magnesium_M=0.0092,
+            paramset=ps, dangles=2,
+        )
+
+
+def test_25c_fold_finds_weak_hairpins():
+    # AGACCAAACAAGACGTCCT folds at 25C but not at 37C.
+    # hairpin_thermo must find the hairpin and return a Tm.
+    from strider.thermo.parameters import load_parameters
+    ps = load_parameters("mathews2004-dna")
+    th = hairpin_thermo(
+        "AGACCAAACAAGACGTCCT",
+        sodium_M=0.05, magnesium_M=0.0092,
+        paramset=ps, dangles=2,
+    )
+    assert th.tm_celsius > 0
+    assert th.structure != "..................."
+
+
+# ─── Multiloop splitting ────────────────────────────────────────────────────
+
+def test_multiloop_splits_to_stem_loops():
+    # A multiloop MFE must be decomposed into stem-loops and the most
+    # stable one returned, instead of raising ValueError.
+    from strider.thermo.hairpin import _split_stem_groups
+
+    # Two independent stems: ((...))....((((....))))
+    seq = "TCGAAGAGGTTCTGCAGCTGCAGG"
+    struct = "((...))....((((....))))."
+    groups = _split_stem_groups(seq, struct)
+    assert groups is not None
+    assert len(groups) == 2
+    # Each group must be a valid sub-string + sub-structure of equal length
+    for sub_seq, sub_struct in groups:
+        assert len(sub_seq) == len(sub_struct)
+        assert "(" in sub_struct
+    # Group 0: ((...)) at positions 0-6
+    assert groups[0][1] == "((...))"
+    # Group 1: ((((....)))) at positions 11-22
+    assert groups[1][1] == "((((....))))"
+
+
+def test_single_hairpin_returns_none_from_split():
+    from strider.thermo.hairpin import _split_stem_groups
+    groups = _split_stem_groups("GCGCAAAGCGC", "((((....))))")
+    assert groups is None  # single hairpin, no split needed
+
+
+def test_unbalanced_returns_none_from_split():
+    from strider.thermo.hairpin import _split_stem_groups
+    assert _split_stem_groups("GCGC", "((()") is None
+    assert _split_stem_groups("GCGC", "(()))") is None
+
+
+def test_no_pairs_returns_none_from_split():
+    from strider.thermo.hairpin import _split_stem_groups
+    assert _split_stem_groups("AAAA", "....") is None

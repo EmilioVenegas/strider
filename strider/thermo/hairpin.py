@@ -50,6 +50,23 @@ from dataclasses import dataclass
 
 T_REF = 310.15  # K, the 37 °C reference at which ΔG₃₇ tables are defined
 
+# Below this |ΔS| (cal/mol/K) the two-state Tm = ΔH/ΔS is numerically
+# unstable: a tiny perturbation in dG37 swings Tm by hundreds of degrees.
+# 0.5 cal/mol/K is the smallest dG37 shift (~0.15 kcal/mol) that still
+# produces a Tm within the physical range for DNA hairpins.
+MIN_DS_CAL = 0.5        # cal/mol/K
+
+# DNA hairpins in aqueous solution melt well below 200 °C (IDT's max
+# observed value is ~106 °C).  Tm above this ceiling is a numerical
+# artifact of near-degenerate dH/dS and the two-state model does not apply.
+MAX_TM_CELSIUS = 200.0  # °C
+
+# Fold temperature for the internal MFE: 25 °C, not the 37 °C dG-table
+# reference.  At 37 °C, marginally stable hairpins (Tm 25-37 °C) unfold
+# and are missed, yielding NA Tm for sequences that do form hairpins at
+# typical assay temperatures.
+FOLD_CELSIUS = 25.0
+
 
 @dataclass(frozen=True)
 class HairpinThermo:
@@ -106,7 +123,6 @@ def hairpin_thermo(
         into hairpin stem-loops (e.g. a pseudoknot).  Multiloops are handled
         by splitting into individual stem-loops and scoring the most stable.
     """
-    from strider.structure.mfe import fold_mfe
     from strider.thermo.salt import dg_per_bp_salt, tan_chen_helix_dg, TAN_CHEN_MIN_BP
     from strider.thermo.structure_thermo import (
         parse_hairpin_pairs,
@@ -117,17 +133,18 @@ def hairpin_thermo(
     seq = seq.upper().replace("U", "T")
 
     if structure is None:
-        # Use ThermoEngine at 25C at the 1M Na+ reference state.  At 37C (the
-        # dG-table reference), marginally stable hairpins (Tm 25-37C) unfold
-        # and are missed.  ThermoEngine applies the temperature correction
-        # dG(T) = dH - T*dS, which at 25C makes weak structures stable enough
-        # to find.  Salt is NOT passed to ThermoEngine: the MFE structure must
-        # be the same regardless of the caller's salt conditions (the Owczarzy
-        # salt model, for instance, expects a fixed structure and only adjusts
-        # Tm).  Salt corrections are applied later via dG37 = dG37_1M + salt_dg.
+        # Fold at 25C (not 37C) via ThermoEngine.  At 37C (the dG-table
+        # reference), marginally stable hairpins (Tm 25-37C) unfold and are
+        # missed, yielding NA Tm for sequences that do form hairpins at typical
+        # assay temperatures.  ThermoEngine applies dG(T) = dH - T*dS, which
+        # at 25C makes weak structures stable enough to find.  Salt is NOT
+        # passed: the MFE structure must be the same regardless of the
+        # caller's salt conditions (the Owczarzy salt model expects a fixed
+        # structure and only adjusts Tm).  Salt corrections are applied later
+        # via dG37 = dG37_1M + salt_dg.
         from strider import ThermoEngine
         eng = ThermoEngine(
-            material=material, celsius=25.0,
+            material=material, celsius=FOLD_CELSIUS,
             parameter_set=paramset if paramset is not None else None,
             dangles=dangles,
         )
@@ -160,7 +177,7 @@ def hairpin_thermo(
                 if result.dG37 < best_dG:
                     best_dG = result.dG37
                     best_result = result
-            except (ValueError, Exception):
+            except Exception:
                 continue
         if best_result is None:
             raise ValueError("no valid stem-loop found in multiloop")
@@ -196,11 +213,11 @@ def hairpin_thermo(
             applied = "per_bp"
     dG37 = dG37_1M + salt_dg
     dS_kcal = (dH - dG37) / T_REF               # kcal/mol/K
-    if abs(dS_kcal) < 0.0005:  # < 0.5 cal/mol/K: two-state model not applicable
+    if abs(dS_kcal) < MIN_DS_CAL / 1000.0:
         raise ValueError("degenerate entropy — cannot define a melting point")
     tm_K = dH / dS_kcal
     tm_C = tm_K - 273.15
-    if tm_C > 200.0:
+    if tm_C > MAX_TM_CELSIUS:
         raise ValueError("Tm exceeds 200C — two-state model not applicable")
     return HairpinThermo(
         tm_celsius=tm_C,
@@ -251,15 +268,16 @@ def fraction_folded(
     (unknown ``salt_model``, bad ``material``, degenerate ΔS, multiloop MFE)
     still raise instead of being silently flattened.
     """
-    from strider.structure.mfe import fold_mfe
+    from strider import ThermoEngine
 
     norm = seq.upper().replace("U", "T")
-    if paramset is not None:
-        from strider.thermo._param_context import param_context
-        with param_context(paramset):
-            struct_str, _, _ = fold_mfe(norm, 37.0, material, dangles=dangles)
-    else:
-        struct_str, _, _ = fold_mfe(norm, 37.0, material, dangles=dangles)
+    eng = ThermoEngine(
+        material=material, celsius=FOLD_CELSIUS,
+        parameter_set=paramset if paramset is not None else None,
+        dangles=dangles,
+    )
+    mfe_result = eng.mfe(norm)
+    struct_str = mfe_result.structure
     if "(" not in struct_str:
         return 0.0  # no stable fold — flat melt curve
     th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
@@ -355,6 +373,6 @@ def _split_stem_groups(
     result: list[tuple[str, str]] = []
     for g in groups:
         start = g[0][0]
-        end = g[-1][1]
+        end = g[0][1]  # outermost pair has the largest closing position
         result.append((seq[start:end + 1], struct[start:end + 1]))
     return result
