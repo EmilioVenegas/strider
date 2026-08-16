@@ -71,6 +71,6 @@ jobs:
       run: |
         python -c "import strider._native; print(strider._native.melting_temperature('ATGCGTACGATCGATCGATC'))"
 
-    - name: Run native parity suite (Rust vs Python, 10k-sequence fuzz)
+    - name: Run native parity suites (Rust vs Python)
       run: |
-        pytest tests/test_native_parity.py -v
+        pytest tests/test_native_parity.py tests/test_native_dp_parity.py -v

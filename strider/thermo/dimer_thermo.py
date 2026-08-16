@@ -512,3 +512,60 @@ def dimer_tm(
         strand_conc_M=strand_conc_M,
         salt_model=salt_model,
     ).tm_celsius
+
+
+# ── optional Rust accelerator ──────────────────────────────────────────────
+# ``strider._native.dimer_mfe_candidates`` ports this module's DP fill (DNA)
+# to Rust — same recurrence, same tables (generated from
+# ``strider.thermo.parameters_dna``, see ``native/codegen_tables.py``), 0/600
+# mismatches across the parity fuzz.  The Python implementation above stays
+# as the fallback for RNA / param overrides / no extension, and as the test
+# oracle (``_dimer_mfe_candidates_py``).
+_dimer_mfe_candidates_py = _dimer_mfe_candidates
+
+try:
+    from strider import _native as _n
+
+    if hasattr(_n, "dimer_mfe_candidates"):
+        def _dimer_mfe_candidates(
+            seq1: str,
+            seq2: str | None = None,
+            *,
+            engine=None,
+            material: str = "dna",
+            celsius: float = 37.0,
+            sodium_M: float = 1.0,
+            magnesium_M: float = 0.0,
+        ) -> list[tuple[float, list[tuple[int, int]]]]:
+            """Native DP when DNA and no parameter override are in play; the
+            Python _dimer_mfe_candidates handles every other case.
+
+            kwarg semantics mirror the original: an attached ``engine``
+            overrides material/celsius/salts (which only select the table
+            set — the concrete energies come from the 37 °C tables either
+            way), and custom ParameterSets active via ``param_context`` force
+            the Python path since the native one uses the baked-in tables.
+            """
+            from strider.thermo._param_context import _param_override
+            if engine is not None:
+                material = engine.material
+            if (engine is None or not getattr(engine, "_uses_custom_params", lambda: False)()) \
+                    and str(material or "dna").lower() == "dna" \
+                    and _param_override.get() is None:
+                s1 = seq1.upper().replace("U", "T")
+                s2 = (seq2 if seq2 is not None else seq1).upper().replace("U", "T")
+                # Alphabet guard: non-ACGT bases (N, R, Y, …) would pack as T
+                # on the Rust side and hit wrong table entries where Python's
+                # dict.get(key, default) misses. Fall back to Python — the
+                # native DP is only exact for pure ACGT + U sequences.
+                if s1 and s2 and set(s1) <= set("ACGT") and set(s2) <= set("ACGT"):
+                    return [
+                        (float(e), [tuple(map(int, pr)) for pr in pairs])
+                        for e, pairs in _n.dimer_mfe_candidates(s1, s2)
+                    ]
+            return _dimer_mfe_candidates_py(
+                seq1, seq2, engine=engine, material=material, celsius=celsius,
+                sodium_M=sodium_M, magnesium_M=magnesium_M,
+            )
+except ImportError:  # pragma: no cover - extension absent (pure-Python env)
+    _n = None
