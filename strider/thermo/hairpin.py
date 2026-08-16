@@ -102,8 +102,9 @@ def hairpin_thermo(
 
     Raises
     ------
-    ValueError : if the structure has no base pairs or is not a single
-        unbranched hairpin (e.g. a multiloop).
+    ValueError : if the structure has no base pairs or cannot be decomposed
+        into hairpin stem-loops (e.g. a pseudoknot).  Multiloops are handled
+        by splitting into individual stem-loops and scoring the most stable.
     """
     from strider.structure.mfe import fold_mfe
     from strider.thermo.salt import dg_per_bp_salt, tan_chen_helix_dg, TAN_CHEN_MIN_BP
@@ -116,15 +117,22 @@ def hairpin_thermo(
     seq = seq.upper().replace("U", "T")
 
     if structure is None:
-        if paramset is not None:
-            # Fold with the same tables the scoring walk will use; otherwise the
-            # MFE structure would be chosen by the native set and then scored by
-            # the custom one — two different models.
-            from strider.thermo._param_context import param_context
-            with param_context(paramset):
-                struct_str, _, _ = fold_mfe(seq, 37.0, material, dangles=dangles)
-        else:
-            struct_str, _, _ = fold_mfe(seq, 37.0, material, dangles=dangles)
+        # Use ThermoEngine at 25C at the 1M Na+ reference state.  At 37C (the
+        # dG-table reference), marginally stable hairpins (Tm 25-37C) unfold
+        # and are missed.  ThermoEngine applies the temperature correction
+        # dG(T) = dH - T*dS, which at 25C makes weak structures stable enough
+        # to find.  Salt is NOT passed to ThermoEngine: the MFE structure must
+        # be the same regardless of the caller's salt conditions (the Owczarzy
+        # salt model, for instance, expects a fixed structure and only adjusts
+        # Tm).  Salt corrections are applied later via dG37 = dG37_1M + salt_dg.
+        from strider import ThermoEngine
+        eng = ThermoEngine(
+            material=material, celsius=25.0,
+            parameter_set=paramset if paramset is not None else None,
+            dangles=dangles,
+        )
+        mfe_result = eng.mfe(seq)
+        struct_str = mfe_result.structure
     elif isinstance(structure, str):
         struct_str = structure
     else:
@@ -132,7 +140,31 @@ def hairpin_thermo(
 
     pairs = parse_hairpin_pairs(struct_str)
     if pairs is None:
-        raise ValueError("structure is not a single unbranched hairpin")
+        # Multiloop or branched structure: try splitting into individual
+        # stem-loops and recurse on the most stable one.  This recovers Tm
+        # for sequences whose MFE is a multiloop but contain a meaningful
+        # hairpin stem (common in GC-rich primers).
+        stem_groups = _split_stem_groups(seq, struct_str)
+        if stem_groups is None:
+            raise ValueError("structure is not a single unbranched hairpin")
+
+        best_result = None
+        best_dG = math.inf
+        for sub_seq, sub_struct in stem_groups:
+            try:
+                result = hairpin_thermo(
+                    sub_seq, sodium_M, magnesium_M, material,
+                    structure=sub_struct, salt_model=salt_model,
+                    paramset=paramset, dangles=dangles,
+                )
+                if result.dG37 < best_dG:
+                    best_dG = result.dG37
+                    best_result = result
+            except (ValueError, Exception):
+                continue
+        if best_result is None:
+            raise ValueError("no valid stem-loop found in multiloop")
+        return best_result
 
     # ΔG and ΔH from the same per-element walk → a consistent ΔS at T_ref.
     dG37_1M = structure_free_energy(seq, struct_str, material, paramset=paramset, dangles=dangles)
@@ -164,11 +196,14 @@ def hairpin_thermo(
             applied = "per_bp"
     dG37 = dG37_1M + salt_dg
     dS_kcal = (dH - dG37) / T_REF               # kcal/mol/K
-    if dS_kcal == 0:
+    if abs(dS_kcal) < 0.0005:  # < 0.5 cal/mol/K: two-state model not applicable
         raise ValueError("degenerate entropy — cannot define a melting point")
     tm_K = dH / dS_kcal
+    tm_C = tm_K - 273.15
+    if tm_C > 200.0:
+        raise ValueError("Tm exceeds 200C — two-state model not applicable")
     return HairpinThermo(
-        tm_celsius=tm_K - 273.15,
+        tm_celsius=tm_C,
         dH=dH,
         dS=dS_kcal * 1000.0,
         dG37=dG37,
@@ -270,3 +305,56 @@ def _dotbracket(seq: str, pairs: list[tuple[int, int]]) -> str:
     for i, j in pairs:
         s[i], s[j] = "(", ")"
     return "".join(s)
+
+
+def _split_stem_groups(
+    seq: str, struct: str,
+) -> list[tuple[str, str]] | None:
+    """Split a multiloop dot-bracket into individual stem-loops.
+
+    Walks the base-pair list and groups contiguous nested pairs into stems.
+    Each stem (with its closing hairpin loop) becomes a standalone hairpin
+    sub-structure.  Returns ``None`` if the structure is a single hairpin
+    (no split needed) or malformed (unbalanced / pseudoknot).
+
+    Mirrors the ``splitStemGroups`` algorithm in Oligool's HairpinSVG.tsx.
+    """
+    stack: list[int] = []
+    pairs: list[tuple[int, int]] = []
+    for k, c in enumerate(struct):
+        if c == "(":
+            stack.append(k)
+        elif c == ")":
+            if not stack:
+                return None
+            pairs.append((stack.pop(), k))
+        elif c != ".":
+            return None
+    if stack or not pairs:
+        return None
+
+    pairs.sort()
+
+    groups: list[list[tuple[int, int]]] = []
+    cur: list[tuple[int, int]] = [pairs[0]]
+    prev_right = pairs[0][1]
+
+    for k in range(1, len(pairs)):
+        if pairs[k][1] < prev_right:
+            cur.append(pairs[k])
+            prev_right = pairs[k][1]
+        else:
+            groups.append(cur)
+            cur = [pairs[k]]
+            prev_right = pairs[k][1]
+    groups.append(cur)
+
+    if len(groups) <= 1:
+        return None
+
+    result: list[tuple[str, str]] = []
+    for g in groups:
+        start = g[0][0]
+        end = g[-1][1]
+        result.append((seq[start:end + 1], struct[start:end + 1]))
+    return result
