@@ -179,15 +179,21 @@ class ThermoEngine:
             self.cache.set(key, result)
         return result
 
-    def pfunc(self, *sequences: str) -> PFuncResult:
-        """Ensemble free energy and pair probability matrix."""
-        key = self._cache_key("pfunc", sequences)
+    def pfunc(self, *sequences: str, pair_probs: bool = True) -> PFuncResult:
+        """Ensemble free energy and pair probability matrix.
+
+        ``pair_probs=False`` skips the outside recurrence and returns a zero
+        matrix for ``pair_probs``; ``free_energy`` is unchanged (see
+        :func:`strider.thermo.ensemble.ensemble_dg`).
+        """
+        op = "pfunc" if pair_probs else "pfunc_dg"
+        key = self._cache_key(op, sequences)
         if self.cache:
             cached = self.cache.get(key)
             if cached is not None:
                 return cached
 
-        result = self._pfunc_dispatch(sequences)
+        result = self._pfunc_dispatch(sequences, pair_probs=pair_probs)
         if self.correction_model is not None:
             combined = "".join(sequences)
             result = PFuncResult(
@@ -595,11 +601,11 @@ class ThermoEngine:
                 total += dg
         return total
 
-    def _pfunc_dispatch(self, sequences: tuple[str, ...]) -> PFuncResult:
+    def _pfunc_dispatch(self, sequences: tuple[str, ...], pair_probs: bool = True) -> PFuncResult:
         """Route partition function calculation to the active backend."""
         if self._backend == "vienna":
             return self._pfunc_vienna(sequences)
-        return self._pfunc_native(sequences)
+        return self._pfunc_native(sequences, pair_probs=pair_probs)
 
     # ─── native backend ───────────────────────────────────────────────────────
 
@@ -654,11 +660,11 @@ class ThermoEngine:
             sequence=seq, strand_order=tuple(order),
         )
 
-    def _pfunc_native(self, sequences: tuple[str, ...]) -> PFuncResult:
+    def _pfunc_native(self, sequences: tuple[str, ...], pair_probs: bool = True) -> PFuncResult:
         """Partition function via the built-in McCaskill DP (single- or multi-strand)."""
         from strider.thermo._param_context import param_context
         with param_context(self._param_override()):
-            return self._pfunc_native_inner(sequences)
+            return self._pfunc_native_inner(sequences, pair_probs=pair_probs)
 
     def _param_override(self) -> "ParameterSet | None":
         """Resolve the :class:`ParameterSet` override active for the native DP.
@@ -690,13 +696,14 @@ class ThermoEngine:
             return blend_paramset(custom, self.celsius)
         return native_temperature_paramset(self.material, self.celsius)
 
-    def _pfunc_native_inner(self, sequences: tuple[str, ...]) -> PFuncResult:
+    def _pfunc_native_inner(self, sequences: tuple[str, ...], pair_probs: bool = True) -> PFuncResult:
         """Body of :meth:`_pfunc_native`; called inside the override context."""
         if len(sequences) == 1:
             from strider.thermo.ensemble import ensemble_dg
             dG, probs = ensemble_dg(
                 sequences[0], self.celsius, self.material,
                 self.sodium, self.magnesium,
+                pair_probs=pair_probs,
             )
         else:
             # Multi-strand: nick-aware McCaskill DP on concatenated sequence.
@@ -707,6 +714,7 @@ class ThermoEngine:
             dG, probs = multistrand_pairs(
                 list(sequences), self.celsius, self.material,
                 self.sodium, self.magnesium,
+                pair_probs=pair_probs,
             )
             # Rotational-symmetry correction: the nick-aware DP is for the
             # *ordered* concatenation, so a homomeric complex over-counts by σ.
@@ -812,8 +820,10 @@ class ThermoEngine:
             ps_name = getattr(ps_arg, "name", "custom")
         # dangles is scoped to MFE-style results only (pfunc/ensemble explicitly
         # ignores it, see __init__ docs); folding it into a pfunc cache key would
-        # imply an ensemble effect that does not exist.
-        dang = f"|d{self.dangles}" if op != "pfunc" else ""
+        # imply an ensemble effect that does not exist.  "pfunc_dg" is the
+        # free-energy-only variant of pfunc (pair_probs=False) and likewise
+        # ignores dangles.
+        dang = f"|d{self.dangles}" if op not in ("pfunc", "pfunc_dg") else ""
         raw = (
             f"{op}|{self.material}|{self.celsius}|{self.sodium}|{self.magnesium}|"
             f"{ps_name}{dang}|{'|'.join(sequences)}"
