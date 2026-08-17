@@ -96,13 +96,16 @@ def test_tan_chen_magnesium_raises_tm_monotonically():
 
 # ─── dS threshold and Tm ceiling ─────────────────────────────────────────────
 
-def test_degenerate_ds_raises():
-    # A structure with near-zero dS (e.g. many interior 1x1 loops where
-    # positive loop dH nearly cancels negative stack dH) must raise
-    # instead of returning an absurd Tm.
-    from strider.thermo.hairpin import MIN_DS_CAL, MAX_TM_CELSIUS
-    assert MIN_DS_CAL == 0.5
-    assert MAX_TM_CELSIUS == 200.0
+def test_degenerate_ds_raises(monkeypatch):
+    # When dH approx dG37 (near-zero |dS|), the two-state Tm = dH/dS is
+    # numerically unstable.  The guard must raise ValueError instead of
+    # returning an absurd Tm.  Force the condition by patching the energy
+    # walkers to return equal dH and dG37 (dS = 0).
+    from strider.thermo import structure_thermo
+    monkeypatch.setattr(structure_thermo, "structure_free_energy", lambda *a, **kw: -5.0)
+    monkeypatch.setattr(structure_thermo, "structure_enthalpy", lambda *a, **kw: -5.0)
+    with pytest.raises(ValueError, match="entropy"):
+        hairpin_thermo("GCGCAAAAGCGC", sodium_M=1.0, magnesium_M=0.0)
 
 
 def test_extreme_tm_raises():

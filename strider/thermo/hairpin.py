@@ -61,10 +61,11 @@ MIN_DS_CAL = 0.5        # cal/mol/K
 # artifact of near-degenerate dH/dS and the two-state model does not apply.
 MAX_TM_CELSIUS = 200.0  # °C
 
-# Fold temperature for the internal MFE: 25 °C, not the 37 °C dG-table
-# reference.  At 37 °C, marginally stable hairpins (Tm 25-37 °C) unfold
-# and are missed, yielding NA Tm for sequences that do form hairpins at
-# typical assay temperatures.
+# Fold temperature for the internal MFE: 25 °C, matching IDT OligoAnalyzer's
+# reporting temperature for hairpin analysis.  At 37 °C (the dG-table
+# reference), marginally stable hairpins (Tm 25-37 °C) unfold and are missed,
+# yielding NA Tm.  Override via the ``fold_celsius`` parameter to restore the
+# 37 °C behavior or use any other fold temperature.
 FOLD_CELSIUS = 25.0
 
 
@@ -89,6 +90,7 @@ def hairpin_thermo(
     salt_model: str = "auto",
     paramset=None,
     dangles: int = 0,
+    fold_celsius: float = FOLD_CELSIUS,
 ) -> HairpinThermo:
     """
     Two-state thermodynamics (Tm, ΔH, ΔS, ΔG₃₇) for a hairpin.
@@ -116,6 +118,11 @@ def hairpin_thermo(
         ``load_parameters("mathews2004-dna")`` to use Mathews 2004 DNA parameters
         (matching IDT/ViennaRNA).  When ``None`` (default), uses the native
         parameter set for ``material``.
+    fold_celsius : temperature at which the internal MFE fold is performed when
+        ``structure`` is None (default 25 °C, matching IDT OligoAnalyzer's
+        reporting temperature).  At 37 °C (the dG-table reference), marginally
+        stable hairpins (Tm 25-37 °C) unfold and are missed, yielding NA Tm.
+        Pass 37.0 to restore the pre-25 °C fold behavior.
 
     Raises
     ------
@@ -133,7 +140,8 @@ def hairpin_thermo(
     seq = seq.upper().replace("U", "T")
 
     if structure is None:
-        # Fold at 25C (not 37C) via ThermoEngine.  At 37C (the dG-table
+        # Fold at the caller-specified temperature (default 25C, matching IDT
+        # OligoAnalyzer's reporting temperature).  At 37C (the dG-table
         # reference), marginally stable hairpins (Tm 25-37C) unfold and are
         # missed, yielding NA Tm for sequences that do form hairpins at typical
         # assay temperatures.  ThermoEngine applies dG(T) = dH - T*dS, which
@@ -144,7 +152,7 @@ def hairpin_thermo(
         # via dG37 = dG37_1M + salt_dg.
         from strider import ThermoEngine
         eng = ThermoEngine(
-            material=material, celsius=FOLD_CELSIUS,
+            material=material, celsius=fold_celsius,
             parameter_set=paramset if paramset is not None else None,
             dangles=dangles,
         )
@@ -173,11 +181,12 @@ def hairpin_thermo(
                     sub_seq, sodium_M, magnesium_M, material,
                     structure=sub_struct, salt_model=salt_model,
                     paramset=paramset, dangles=dangles,
+                    fold_celsius=fold_celsius,
                 )
                 if result.dG37 < best_dG:
                     best_dG = result.dG37
                     best_result = result
-            except Exception:
+            except ValueError:
                 continue
         if best_result is None:
             raise ValueError("no valid stem-loop found in multiloop")
@@ -238,12 +247,13 @@ def hairpin_tm(
     salt_model: str = "auto",
     paramset=None,
     dangles: int = 0,
+    fold_celsius: float = FOLD_CELSIUS,
 ) -> float:
     """Melting temperature (°C) of the predicted hairpin. See :func:`hairpin_thermo`
     (raises ``ValueError`` when the sequence does not fold into a hairpin)."""
     return hairpin_thermo(seq, sodium_M, magnesium_M, material,
                           salt_model=salt_model, paramset=paramset,
-                          dangles=dangles).tm_celsius
+                          dangles=dangles, fold_celsius=fold_celsius).tm_celsius
 
 
 def fraction_folded(
@@ -255,6 +265,7 @@ def fraction_folded(
     salt_model: str = "auto",
     paramset=None,
     dangles: int = 0,
+    fold_celsius: float = FOLD_CELSIUS,
 ) -> float:
     """
     Two-state folded fraction at ``celsius`` — the quantity a beacon melt
@@ -272,7 +283,7 @@ def fraction_folded(
 
     norm = seq.upper().replace("U", "T")
     eng = ThermoEngine(
-        material=material, celsius=FOLD_CELSIUS,
+        material=material, celsius=fold_celsius,
         parameter_set=paramset if paramset is not None else None,
         dangles=dangles,
     )
@@ -282,7 +293,8 @@ def fraction_folded(
         return 0.0  # no stable fold — flat melt curve
     th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
                         salt_model=salt_model, paramset=paramset,
-                        dangles=dangles, structure=struct_str)
+                        dangles=dangles, structure=struct_str,
+                        fold_celsius=fold_celsius)
     T = celsius + 273.15
     dG_T = th.dH - T * th.dS / 1000.0           # ΔG(T) of the closed state
     R = 1.987e-3
