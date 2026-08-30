@@ -90,4 +90,9 @@ paper/
 native/target/
 
 # Local benchmark evidence (engine parity runs, etc.)
-evidence/
+evidence/*
+# The 10k oligo engine parity table and its analysis script are tracked so the
+# benchmark is reproducible from the repo (see scripts/oligo_engine_parity.py;
+# refresh only the strider columns with --refresh-strider, no new IDT calls).
+!evidence/oligo_engine_parity.csv
+!evidence/analyze_parity.R
