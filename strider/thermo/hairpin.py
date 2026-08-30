@@ -68,6 +68,14 @@ MAX_TM_CELSIUS = 200.0  # °C
 # 37 °C behavior or use any other fold temperature.
 FOLD_CELSIUS = 25.0
 
+# Minimum stem length (base pairs, counted over the whole stem including
+# bulge/internal-loop interruptions) for a two-state hairpin Tm to be
+# meaningful.  A 2-bp stem is marginally stable at best: its ΔS is small and
+# dominated by loop initiation, so ΔH/ΔS is numerically unstable and the
+# two-state model does not apply.  Structures below this raise ValueError
+# instead of returning an unreliable Tm.
+MIN_STEM_BP = 3
+
 
 @dataclass(frozen=True)
 class HairpinThermo:
@@ -127,8 +135,10 @@ def hairpin_thermo(
     Raises
     ------
     ValueError : if the structure has no base pairs or cannot be decomposed
-        into hairpin stem-loops (e.g. a pseudoknot).  Multiloops are handled
-        by splitting into individual stem-loops and scoring the most stable.
+        into hairpin stem-loops (e.g. a pseudoknot), if the stem is shorter
+        than ``MIN_STEM_BP`` base pairs, or if ΔS is degenerate / Tm exceeds
+        ``MAX_TM_CELSIUS``.  Multiloops are handled by splitting into
+        individual stem-loops and scoring the most stable.
     """
     from strider.thermo.salt import dg_per_bp_salt, tan_chen_helix_dg, TAN_CHEN_MIN_BP
     from strider.thermo.structure_thermo import (
@@ -192,6 +202,16 @@ def hairpin_thermo(
             raise ValueError("no valid stem-loop found in multiloop")
         return best_result
 
+    # Reject marginal stems at the source: a 2-bp stem is barely stable and
+    # its ΔS is dominated by loop initiation, so ΔH/ΔS (the two-state Tm)
+    # is numerically unstable.  This also keeps the 25 °C fold from finding
+    # weak structures only to reject them later on the degeneracy guards.
+    n = len(pairs)
+    if n < MIN_STEM_BP:
+        raise ValueError(
+            f"hairpin stem is {n} bp (minimum {MIN_STEM_BP} bp) "
+            "- two-state melting temperature not applicable"
+        )
     # ΔG and ΔH from the same per-element walk → a consistent ΔS at T_ref.
     dG37_1M = structure_free_energy(seq, struct_str, material, paramset=paramset, dangles=dangles)
     dH = structure_enthalpy(seq, struct_str, material, paramset=paramset, dangles=dangles)
@@ -199,7 +219,6 @@ def hairpin_thermo(
     # Fold salt into the closed-state ΔG₃₇, then derive ΔS at T_ref.  The Tan-Chen
     # whole-helix model needs the stem length and is only fit for ≥6 bp; below that
     # (or when forced off) we use the per-base-pair correction.
-    n = len(pairs)
     if salt_model == "owczarzy":
         # Graft the GC-aware, experimentally-calibrated Owczarzy Tm shift onto the
         # hairpin: find the closed-state ΔG offset that reproduces exactly the
@@ -273,11 +292,15 @@ def fraction_folded(
 
     Sequences with no stable hairpin fold at all → their melt is a flat zero;
     ``fraction_folded`` returns ``0.0`` for them (it used to raise ``ValueError``,
-    which made every non-folding primer crash melt-curve analysis).
+    which made every non-folding primer crash melt-curve analysis).  The
+    same applies to MFEs whose best stem is below ``MIN_STEM_BP``, and to
+    multiloops from which no scorable stem-loop can be extracted: a
+    marginal 2-bp stem is not a stable hairpin, so the melt is flat zero.
 
-    Only the no-base-pairs case maps to zero.  Caller-mistake conditions
-    (unknown ``salt_model``, bad ``material``, degenerate ΔS, multiloop MFE)
-    still raise instead of being silently flattened.
+    Only those structurally-unscored cases map to zero.  Caller-mistake
+    conditions (unknown ``salt_model``, bad ``material``) and degenerate
+    ΔS / extreme Tm on the scored structure still raise instead of being
+    silently flattened.
     """
     from strider import ThermoEngine
 
@@ -291,10 +314,20 @@ def fraction_folded(
     struct_str = mfe_result.structure
     if "(" not in struct_str:
         return 0.0  # no stable fold — flat melt curve
-    th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
-                        salt_model=salt_model, paramset=paramset,
-                        dangles=dangles, structure=struct_str,
-                        fold_celsius=fold_celsius)
+    if min(struct_str.count("("), struct_str.count(")")) < MIN_STEM_BP:
+        return 0.0  # best stem below MIN_STEM_BP — not a stable hairpin
+    try:
+        th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
+                            salt_model=salt_model, paramset=paramset,
+                            dangles=dangles, structure=struct_str,
+                            fold_celsius=fold_celsius)
+    except ValueError as e:
+        # A multiloop from which no scorable stem-loop could be extracted
+        # (all candidates below MIN_STEM_BP or otherwise rejected): same
+        # verdict as the precheck above — there is no hairpin to melt.
+        if "no valid stem-loop" in str(e):
+            return 0.0
+        raise
     T = celsius + 273.15
     dG_T = th.dH - T * th.dS / 1000.0           # ΔG(T) of the closed state
     R = 1.987e-3

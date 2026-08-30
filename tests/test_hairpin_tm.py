@@ -135,6 +135,77 @@ def test_25c_fold_finds_weak_hairpins():
     assert th.structure != "..................."
 
 
+# ─── Minimum stem length ─────────────────────────────────────────────────────
+
+def test_two_bp_stem_raises():
+    # A 2-bp stem is below MIN_STEM_BP: the two-state Tm = ΔH/ΔS is not
+    # applicable to a marginally stable helix, so it must raise rather than
+    # return a numerically unstable value.
+    with pytest.raises(ValueError, match="stem is 2 bp"):
+        hairpin_thermo("CGAACGAAAAA", structure="((...))....")
+
+
+def test_three_bp_stem_passes():
+    # One pair above the minimum is enough: the same hairpin with a 3-bp
+    # stem must score normally.
+    th = hairpin_thermo("CGCAAAGCGAA", structure="(((...)))..")
+    assert th.n_pairs == 3
+    assert th.tm_celsius > 0
+
+
+def test_multiloop_with_only_short_stems_raises():
+    # Both sub-stems of the multiloop are 2 bp: every stem-loop candidate is
+    # rejected by the minimum, so the aggregate "no valid stem-loop" error
+    # is raised.
+    seq = "CGAACGAAAACGAAACG"
+    struct = "((..))....((...))"
+    with pytest.raises(ValueError, match="no valid stem-loop"):
+        hairpin_thermo(seq, structure=struct)
+
+
+def test_fraction_folded_short_stem_is_zero():
+    # An MFE whose whole stem is 2 bp is not a stable hairpin: the melt
+    # curve is flat zero, not a crash (mirrors the no-base-pairs case).
+    class _StubEngine:
+        def __init__(self, **kwargs):
+            pass
+
+        def mfe(self, seq):
+            class _Result:
+                structure = "((...))...."
+                energy = 0.0
+            return _Result()
+
+    import strider
+    orig = strider.ThermoEngine
+    strider.ThermoEngine = _StubEngine
+    try:
+        assert fraction_folded("CGAACGAAAAA", 25.0, 1.0, 0.0) == 0.0
+    finally:
+        strider.ThermoEngine = orig
+
+
+def test_fraction_folded_multiloop_all_short_is_zero():
+    # Same verdict when the short stems hide behind a multiloop MFE.
+    class _StubEngine:
+        def __init__(self, **kwargs):
+            pass
+
+        def mfe(self, seq):
+            class _Result:
+                structure = "((..))....((...))"
+                energy = 0.0
+            return _Result()
+
+    import strider
+    orig = strider.ThermoEngine
+    strider.ThermoEngine = _StubEngine
+    try:
+        assert fraction_folded("CGAACGAAAACGAAACG", 25.0, 1.0, 0.0) == 0.0
+    finally:
+        strider.ThermoEngine = orig
+
+
 # ─── Multiloop splitting ────────────────────────────────────────────────────
 
 def test_multiloop_splits_to_stem_loops():
