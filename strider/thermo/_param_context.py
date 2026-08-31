@@ -24,6 +24,7 @@ that you do not want to widen with extra keyword arguments.
 from __future__ import annotations
 
 import contextvars
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,6 +34,22 @@ if TYPE_CHECKING:
 _param_override: contextvars.ContextVar["ParameterSet | None"] = contextvars.ContextVar(
     "strider_param_override", default=None,
 )
+
+
+@lru_cache(maxsize=8)
+def _resolve_name(name: str) -> "ParameterSet":
+    """Resolve a parameter-set name (e.g. ``"mathews2004-dna"``) to its
+    :class:`ParameterSet`.  Memoized so repeated overrides by name never
+    re-parse from disk on the hot path.
+
+    Every caller receives the SAME cached instance.  It is read-only by
+    contract: never mutate ``.dG`` / ``.dH`` in place (a future temperature-
+    adjusted parameter set must be built as a new instance).  Currently
+    verified: the tree contains no in-place writes to a ParameterSet's tables.
+    """
+    from strider.thermo.parameters import load_parameters
+
+    return load_parameters(name)
 
 
 def get_override() -> "ParameterSet | None":
@@ -61,7 +78,11 @@ class param_context:
 
     __slots__ = ("params", "_token")
 
-    def __init__(self, params: "ParameterSet | None") -> None:
+    def __init__(self, params: "ParameterSet | str | None") -> None:
+        # Accept either a ParameterSet instance or a resolvable name (memoized
+        # load) so callers never have to special-case the two forms.
+        if isinstance(params, str):
+            params = _resolve_name(params)
         self.params = params
         self._token: contextvars.Token | None = None
 

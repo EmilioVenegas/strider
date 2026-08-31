@@ -63,6 +63,14 @@ class ThermoEngine:
     backend  : 'auto' | 'native' | 'vienna'
     cache    : optional DiskCache for persistent memoization
     correction_model : optional callable(sequence) -> float for ML corrections
+    dangles  : exterior-stem dangling-end handling (0 or 2, default 0).
+        ``2`` = best single *negative* 5′/3′ dangle stack per exterior stem.
+        NOTE: this is **not** exactly ViennaRNA ``dangles=2``, which sums both
+        flanks unconditionally; on a 42-case grid the two-flank cases deviate
+        0.2-0.9 kcal/mol (38/42 within 0.4).  Scope: ``mfe`` and ``subopt``
+        only — the partition function (``pfunc``), ensemble defect matmul,
+        differentiable path and equilibrium solving always use the no-dangle
+        model regardless of this flag.
     """
 
     def __init__(
@@ -75,6 +83,7 @@ class ThermoEngine:
         cache: "DiskCache | None" = None,
         correction_model: Callable[[str], float] | None = None,
         parameter_set: "str | ParameterSet | None" = None,
+        dangles: int = 0,
     ) -> None:
         self.material = material
         self.celsius = celsius
@@ -85,6 +94,13 @@ class ThermoEngine:
         self._backend = self._resolve_backend(backend)
         self._parameter_set_arg = parameter_set
         self._params_cache: "ParameterSet | None" = None
+        if dangles not in (0, 2):
+            raise ValueError(
+                "dangles must be 0 (no exterior dangling ends) or 2 (best single "
+                "negative dangle per exterior stem; MFE/subopt only - not "
+                "identical to ViennaRNA dangles=2, see ThermoEngine docs)"
+            )
+        self.dangles = dangles
 
     @property
     def params(self) -> "ParameterSet":
@@ -163,15 +179,21 @@ class ThermoEngine:
             self.cache.set(key, result)
         return result
 
-    def pfunc(self, *sequences: str) -> PFuncResult:
-        """Ensemble free energy and pair probability matrix."""
-        key = self._cache_key("pfunc", sequences)
+    def pfunc(self, *sequences: str, pair_probs: bool = True) -> PFuncResult:
+        """Ensemble free energy and pair probability matrix.
+
+        ``pair_probs=False`` skips the outside recurrence and returns a zero
+        matrix for ``pair_probs``; ``free_energy`` is unchanged (see
+        :func:`strider.thermo.ensemble.ensemble_dg`).
+        """
+        op = "pfunc" if pair_probs else "pfunc_dg"
+        key = self._cache_key(op, sequences)
         if self.cache:
             cached = self.cache.get(key)
             if cached is not None:
                 return cached
 
-        result = self._pfunc_dispatch(sequences)
+        result = self._pfunc_dispatch(sequences, pair_probs=pair_probs)
         if self.correction_model is not None:
             combined = "".join(sequences)
             result = PFuncResult(
@@ -241,6 +263,7 @@ class ThermoEngine:
                     strands[0], gap=gap, celsius=self.celsius, material=self.material,
                     max_structures=max_structures,
                     sodium_M=self.sodium, magnesium_M=self.magnesium,
+                    dangles=self.dangles,
                 )
             n = len(strands)
             # Widen the structural enumeration so suboptimals that the
@@ -578,11 +601,11 @@ class ThermoEngine:
                 total += dg
         return total
 
-    def _pfunc_dispatch(self, sequences: tuple[str, ...]) -> PFuncResult:
+    def _pfunc_dispatch(self, sequences: tuple[str, ...], pair_probs: bool = True) -> PFuncResult:
         """Route partition function calculation to the active backend."""
         if self._backend == "vienna":
             return self._pfunc_vienna(sequences)
-        return self._pfunc_native(sequences)
+        return self._pfunc_native(sequences, pair_probs=pair_probs)
 
     # ─── native backend ───────────────────────────────────────────────────────
 
@@ -606,12 +629,13 @@ class ThermoEngine:
                 seq = sequences[0] if sequences else ""
                 structure, energy, pairs = fold_mfe(
                     seq, self.celsius, self.material, self.sodium, self.magnesium,
+                    dangles=self.dangles,
                 )
                 order = tuple(range(len(sequences)))
             elif len(sequences) <= DEFAULT_MAX_STRANDS:
                 cf = fold_complex(
                     list(sequences), self.celsius, self.material,
-                    self.sodium, self.magnesium,
+                    self.sodium, self.magnesium, dangles=self.dangles,
                 )
                 structure, energy, pairs, order = (
                     cf.structure, cf.energy, cf.pairs, cf.order,
@@ -621,7 +645,7 @@ class ThermoEngine:
                 order = tuple(range(len(sequences)))
                 structure, energy, pairs = fold_mfe(
                     "&".join(sequences), self.celsius, self.material,
-                    self.sodium, self.magnesium,
+                    self.sodium, self.magnesium, dangles=self.dangles,
                 )
         seq = "&".join(sequences[i] for i in order)
         energy += self._mfe_sigma_correction(sequences, self.celsius)
@@ -636,11 +660,11 @@ class ThermoEngine:
             sequence=seq, strand_order=tuple(order),
         )
 
-    def _pfunc_native(self, sequences: tuple[str, ...]) -> PFuncResult:
+    def _pfunc_native(self, sequences: tuple[str, ...], pair_probs: bool = True) -> PFuncResult:
         """Partition function via the built-in McCaskill DP (single- or multi-strand)."""
         from strider.thermo._param_context import param_context
         with param_context(self._param_override()):
-            return self._pfunc_native_inner(sequences)
+            return self._pfunc_native_inner(sequences, pair_probs=pair_probs)
 
     def _param_override(self) -> "ParameterSet | None":
         """Resolve the :class:`ParameterSet` override active for the native DP.
@@ -672,13 +696,14 @@ class ThermoEngine:
             return blend_paramset(custom, self.celsius)
         return native_temperature_paramset(self.material, self.celsius)
 
-    def _pfunc_native_inner(self, sequences: tuple[str, ...]) -> PFuncResult:
+    def _pfunc_native_inner(self, sequences: tuple[str, ...], pair_probs: bool = True) -> PFuncResult:
         """Body of :meth:`_pfunc_native`; called inside the override context."""
         if len(sequences) == 1:
             from strider.thermo.ensemble import ensemble_dg
             dG, probs = ensemble_dg(
                 sequences[0], self.celsius, self.material,
                 self.sodium, self.magnesium,
+                pair_probs=pair_probs,
             )
         else:
             # Multi-strand: nick-aware McCaskill DP on concatenated sequence.
@@ -689,6 +714,7 @@ class ThermoEngine:
             dG, probs = multistrand_pairs(
                 list(sequences), self.celsius, self.material,
                 self.sodium, self.magnesium,
+                pair_probs=pair_probs,
             )
             # Rotational-symmetry correction: the nick-aware DP is for the
             # *ordered* concatenation, so a homomeric complex over-counts by σ.
@@ -792,9 +818,15 @@ class ThermoEngine:
             ps_name = ps_arg
         else:  # ParameterSet instance
             ps_name = getattr(ps_arg, "name", "custom")
+        # dangles is scoped to MFE-style results only (pfunc/ensemble explicitly
+        # ignores it, see __init__ docs); folding it into a pfunc cache key would
+        # imply an ensemble effect that does not exist.  "pfunc_dg" is the
+        # free-energy-only variant of pfunc (pair_probs=False) and likewise
+        # ignores dangles.
+        dang = f"|d{self.dangles}" if op not in ("pfunc", "pfunc_dg") else ""
         raw = (
             f"{op}|{self.material}|{self.celsius}|{self.sodium}|{self.magnesium}|"
-            f"{ps_name}|{'|'.join(sequences)}"
+            f"{ps_name}{dang}|{'|'.join(sequences)}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()
 

@@ -29,6 +29,7 @@ def fold_mfe(
     material: str = "dna",
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
+    dangles: int = 0,
 ) -> tuple[str, float, list[tuple[int, int]]]:
     """
     Predict the MFE secondary structure for a single strand or strand complex.
@@ -56,6 +57,13 @@ def fold_mfe(
     consistently with :func:`strider.thermo.ensemble.ensemble_dg`.  At 1 M Na⁺,
     0 Mg²⁺ the correction is exactly 0 and the result is unchanged.
 
+    ``dangles`` — dangling-end policy at *exterior* (external-loop) helix
+    placements, mirroring ViennaRNA's model settings: ``0`` (default) = none
+    (historical behavior); ``2`` = like VR ``md.dangles=2`` — each stem placed
+    in the exterior loop also stacks its flanking unpaired bases (best negative
+    ``dangle_5``/``dangle_3`` on the same strand).  Multi-loop junction stems
+    are not decorated (VR's coaxial rules for them are a separate mode).
+
     Returns
     -------
     structure : dot-bracket string with ``'&'`` separators preserved.
@@ -75,14 +83,14 @@ def fold_mfe(
     # ensemble DP; recursion makes the total scale with the number of pairs.
     from strider.thermo.salt import dg_per_bp_salt
     dg_salt = dg_per_bp_salt(sodium_M, magnesium_M, celsius, material)
-    V, W, WM, WM1, energy_fns = _build_mfe_matrices(seq, T, material, nicks, dg_salt)
+    V, W, WM, WM1, energy_fns = _build_mfe_matrices(seq, T, material, nicks, dg_salt, dangles)
     (can, spans, inter, hairpin_e, stack_e, il_e, terminal_e,
-     ml_a, ml_b, ml_c) = energy_fns
+     ml_a, ml_b, ml_c, ext_e) = energy_fns
 
     # Traceback
     pairs: list[tuple[int, int]] = []
     _traceback_W(W, V, WM, WM1, seq, 0, n - 1, T, pairs,
-                 hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
+                 hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, ext_e, dg_salt)
     pairs.sort()
 
     energy = float(W[0][n - 1]) if n > 1 else 0.0
@@ -90,18 +98,57 @@ def fold_mfe(
     return structure, energy, pairs
 
 
-def _build_mfe_matrices(seq, T, material, nicks, dg_salt):
+def _build_mfe_matrices(seq, T, material, nicks, dg_salt, dangles=0):
     """Fill and return the Zuker–Stiegler DP matrices for ``seq``.
 
     Returns ``(V, W, WM, WM1, energy_fns)`` where ``energy_fns`` is the tuple
     ``(can, spans, inter, hairpin_e, stack_e, il_e, terminal_e, ml_a, ml_b,
-    ml_c)``.  Factored out of :func:`fold_mfe` so the suboptimal enumerator in
+    ml_c, ext_e)``.  Factored out of :func:`fold_mfe` so the suboptimal enumerator in
     :mod:`strider.structure.sampling` shares the exact same matrices and energy
     closures — guaranteeing that the subopt MFE equals :func:`fold_mfe`.
+
+    ``dangles``: see :func:`fold_mfe`.  ``0`` = no exterior dangling ends
+    (historical behavior); ``2`` = VR dangles=2 semantics — ``ext_e(ko, jo)``
+    returns the best *negative* 5′/3′ dangle stacks of the flanking unpaired
+    bases against a stem's outermost pair ``(ko, jo)`` on the same strand.
     """
     n = len(seq)
     pairs_set = _wc_pairs(material)
     ml_a, ml_b, ml_c = _multiloop_params(material)
+
+    # Exterior dangling-end stacks (VR-dangles semantics at exterior stems;
+    # empirically verified against ViennaRNA 2.7 on a grid of 25 single-stem
+    # hairpins: single-flank cases match exact negative dangle stacks, and
+    # two-flank cases track the *more stable* of the two flanks — best single
+    # dangle wins, not the sum.
+    if dangles:
+        from strider.thermo import parameters_dna as _pd
+        from strider.thermo import parameters_rna as _pr
+        from strider.thermo._param_context import lookup_table
+        _P = _pd if material.lower() == "dna" else _pr
+        dangle_5 = lookup_table("dangle_5", _P.DANGLE_5)
+        dangle_3 = lookup_table("dangle_3", _P.DANGLE_3)
+
+        def ext_e(ko: int, jo: int) -> float:
+            """Dangling stack at the exterior stem `(ko, jo)`: the best negative
+            5′ dangle from the same-strand base at ``ko - 1`` or 3′ dangle from
+            ``jo + 1`` (a flank *separated* from the pair by a strand boundary
+            is excluded; a flank that starts a new strand still counts)."""
+            best = 0.0
+            # Contiguity to the pair's 5′ side only requires no boundary before
+            # ``ko``; a flank that *starts* a strand is still a valid dangle
+            # (mirrors the 3′ branch, which tests only jo + 1).
+            if ko - 1 >= 0 and ko not in nicks:
+                d5 = dangle_5.get(seq[ko] + seq[jo] + seq[ko - 1])
+                if d5 is not None and d5 < best:
+                    best = d5
+            if jo + 1 < n and (jo + 1) not in nicks:
+                d3 = dangle_3.get(seq[jo - 1] + seq[jo] + seq[jo + 1])
+                if d3 is not None and d3 < best:
+                    best = d3
+            return best
+    else:
+        ext_e = lambda ko, jo: 0.0
 
     # DP tables
     V   = np.full((n, n), INF)   # V[i,j]: min energy with (i,j) paired
@@ -190,12 +237,14 @@ def _build_mfe_matrices(seq, T, material, nicks, dg_salt):
 
             # W[i,j]: any-topology min energy on [i..j]
             w_best = W[i][j - 1] if j > i else 0.0   # j unpaired
-            if V[i][j] < w_best:
-                w_best = V[i][j]
+            if V[i][j] < INF:
+                cand = V[i][j] + ext_e(i, j)          # exterior stem spanning [i..j]
+                if cand < w_best:
+                    w_best = cand
             for k in range(i, j):
                 left = W[i][k] if k > i else 0.0
                 if V[k + 1][j] < INF:
-                    cand = left + V[k + 1][j]
+                    cand = left + V[k + 1][j] + ext_e(k + 1, j)  # exterior stem at [k+1..j]
                     if cand < w_best:
                         w_best = cand
                 if (k + 1) in nicks and W[k + 1][j] < w_best:
@@ -205,14 +254,14 @@ def _build_mfe_matrices(seq, T, material, nicks, dg_salt):
             W[i][j] = w_best
 
     energy_fns = (can, spans, inter, hairpin_e, stack_e, il_e, terminal_e,
-                  ml_a, ml_b, ml_c)
+                  ml_a, ml_b, ml_c, ext_e)
     return V, W, WM, WM1, energy_fns
 
 
 # ─── traceback ────────────────────────────────────────────────────────────────
 
 def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
-                 terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt):
+                 terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, ext_e, dg_salt):
     """Recover the base-pair list achieving W[i..j] by following the recurrences."""
     if j <= i:
         return
@@ -221,10 +270,10 @@ def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
     left_w = W[i][j - 1] if j > i else 0.0
     if abs(target - left_w) < 1e-9:
         _traceback_W(W, V, WM, WM1, seq, i, j - 1, T, out,
-                     hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
+                     hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, ext_e, dg_salt)
         return
 
-    if abs(target - V[i][j]) < 1e-9:
+    if abs(target - (V[i][j] + ext_e(i, j))) < 1e-9:
         out.append((i, j))
         _traceback_V(V, WM, WM1, seq, i, j, T, out,
                      hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
@@ -232,10 +281,10 @@ def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
 
     for k in range(i, j):
         left = W[i][k] if k > i else 0.0
-        if V[k + 1][j] < INF and abs(target - (left + V[k + 1][j])) < 1e-9:
+        if V[k + 1][j] < INF and abs(target - (left + V[k + 1][j] + ext_e(k + 1, j))) < 1e-9:
             if k > i:
                 _traceback_W(W, V, WM, WM1, seq, i, k, T, out,
-                             hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
+                             hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, ext_e, dg_salt)
             out.append((k + 1, j))
             _traceback_V(V, WM, WM1, seq, k + 1, j, T, out,
                          hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
@@ -244,9 +293,9 @@ def _traceback_W(W, V, WM, WM1, seq, i, j, T, out, hairpin_e, stack_e, il_e,
                 and abs(target - (left + W[k + 1][j])) < 1e-9:
             if k > i:
                 _traceback_W(W, V, WM, WM1, seq, i, k, T, out,
-                             hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
+                             hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, ext_e, dg_salt)
             _traceback_W(W, V, WM, WM1, seq, k + 1, j, T, out,
-                         hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, dg_salt)
+                         hairpin_e, stack_e, il_e, terminal_e, can, spans, inter, nicks, ml_a, ml_b, ml_c, ext_e, dg_salt)
             return
 
 

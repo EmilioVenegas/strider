@@ -203,11 +203,12 @@ def _fold_one(
     material: str,
     sodium_M: float,
     magnesium_M: float,
+    dangles: int = 0,
 ) -> ComplexFold:
     """Fold a single arrangement ``order`` of ``strands`` with the linear kernel."""
     ordered = [strands[i] for i in order]
     structure, energy, pairs = fold_mfe(
-        "&".join(ordered), celsius, material, sodium_M, magnesium_M
+        "&".join(ordered), celsius, material, sodium_M, magnesium_M, dangles=dangles
     )
     connected = is_connected(pairs, [len(s) for s in ordered])
     return ComplexFold(energy, structure, pairs, order, connected, 0)
@@ -311,6 +312,7 @@ def fold_complex(
     magnesium_M: float = 0.0,
     max_strands: int = DEFAULT_MAX_STRANDS,
     max_exhaustive: int = DEFAULT_MAX_EXHAUSTIVE,
+    dangles: int = 0,
 ) -> ComplexFold:
     """Order-invariant MFE fold of a multi-strand complex.
 
@@ -352,7 +354,7 @@ def fold_complex(
 
     if n == 1:
         structure, energy, pairs = fold_mfe(
-            strands[0], celsius, material, sodium_M, magnesium_M
+            strands[0], celsius, material, sodium_M, magnesium_M, dangles=dangles
         )
         return ComplexFold(energy, structure, pairs, (0,), True, 1, (((0,), energy),))
 
@@ -361,7 +363,7 @@ def fold_complex(
 
     if _use_exhaustive(len(orders), total_len, max_exhaustive):
         folds = [
-            _fold_one(strands, o, celsius, material, sodium_M, magnesium_M)
+            _fold_one(strands, o, celsius, material, sodium_M, magnesium_M, dangles)
             for o in orders
         ]
         return _select(folds, len(orders))
@@ -379,7 +381,7 @@ def fold_complex(
             if current in seen:
                 break
             seen.add(current)
-            cf = _fold_one(strands, current, celsius, material, sodium_M, magnesium_M)
+            cf = _fold_one(strands, current, celsius, material, sodium_M, magnesium_M, dangles)
             folds.append(cf)
             strand_lens = [len(strands[i]) for i in current]
             q = best_strand_order(cf.pairs, strand_lens)

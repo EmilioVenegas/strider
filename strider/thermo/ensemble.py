@@ -65,6 +65,7 @@ def ensemble_dg(
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
     blocked: "set | None" = None,
+    pair_probs: bool = True,
 ) -> tuple[float, np.ndarray]:
     """
     Ensemble free energy and base-pair probability matrix.
@@ -80,6 +81,13 @@ def ensemble_dg(
 
     ``blocked`` optionally forbids a set of 0-based positions from pairing
     (hard structural constraint; also used to compute unpaired marginals).
+
+    ``pair_probs=False`` skips the outside recurrence
+    (:func:`_external_Q_nodangle` + :func:`_pair_probs_outside`) and returns a
+    zero matrix. ``dG_ens`` is byte-identical either way: the inside partition
+    (``_fill_dp_nicks`` + ``_apply_coaxial_external``) fully determines
+    ``Q[0][n-1]`` before the outside pass runs, and the outside pass writes
+    only to local arrays. Use this when only ``dG_ens`` is needed.
     """
     # Always work in T-form internally.  RNA-specific tables (TERMINAL_PENALTY,
     # TERMINAL_MISMATCH, DANGLE_*, INTERIOR_MISMATCH, STACK) all use T-keyed
@@ -111,6 +119,8 @@ def ensemble_dg(
     if Z <= 0:
         Z = 1.0
     dG_ens = -R * T * math.log(Z)
+    if not pair_probs:
+        return dG_ens, np.zeros((n, n))
     # Pair probabilities use a dangle-free external loop that is exactly
     # consistent with the (dangle-free) Qb/QM/QM1 inside recurrence, so the
     # outside recurrence is self-adjoint (satisfies the unpaired-marginal
@@ -838,6 +848,7 @@ def multistrand_pairs(
     material: str = "dna",
     sodium_M: float = 1.0,
     magnesium_M: float = 0.0,
+    pair_probs: bool = True,
 ) -> tuple[float, np.ndarray]:
     """
     Ensemble free energy and pair-probability matrix for a multi-strand complex.
@@ -845,6 +856,9 @@ def multistrand_pairs(
     Same DP as :func:`_multistrand_dg` but also returns the pair probabilities
     over the concatenated sequence.  Strand boundaries are tracked internally as
     nicks so no hairpin can span a junction.
+
+    ``pair_probs=False`` skips the outside recurrence and returns a zero matrix;
+    ``dG`` is byte-identical (see :func:`ensemble_dg`).
     """
     seq = "".join(sequences).upper().replace("U", "T")
     n = len(seq)
@@ -879,6 +893,8 @@ def multistrand_pairs(
     if Z <= 0:
         Z = 1.0
     dG = -R * T * math.log(Z)
+    if not pair_probs:
+        return dG, np.zeros((n, n))
     Qnd = _external_Q_nodangle(Qb, n)
     Znd = Qnd[0][n - 1] if Qnd[0][n - 1] > 0 else 1.0
     probs = _pair_probs_outside(seq, Qnd, Qb, QM, QM1, n, Znd, T, pairs, material,

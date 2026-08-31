@@ -70,6 +70,8 @@ def hairpin_thermo(
     material: str = "dna",
     structure: list[tuple[int, int]] | str | None = None,
     salt_model: str = "auto",
+    paramset=None,
+    dangles: int = 0,
 ) -> HairpinThermo:
     """
     Two-state thermodynamics (Tm, ΔH, ΔS, ΔG₃₇) for a hairpin.
@@ -92,6 +94,11 @@ def hairpin_thermo(
         experimental Mg²⁺ Tm slope (~0.7 °C/mM) where the per-bp model under-shoots
         (~0.4); the Owczarzy path is GC-aware and uses the corrected Mg term — see
         the README salt benchmark.
+    paramset : optional :class:`~strider.thermo.parameters.ParameterSet` to use
+        for ΔG and ΔH lookups instead of the default native parameter set.  Pass
+        ``load_parameters("mathews2004-dna")`` to use Mathews 2004 DNA parameters
+        (matching IDT/ViennaRNA).  When ``None`` (default), uses the native
+        parameter set for ``material``.
 
     Raises
     ------
@@ -109,7 +116,15 @@ def hairpin_thermo(
     seq = seq.upper().replace("U", "T")
 
     if structure is None:
-        struct_str, _, _ = fold_mfe(seq, 37.0, material)
+        if paramset is not None:
+            # Fold with the same tables the scoring walk will use; otherwise the
+            # MFE structure would be chosen by the native set and then scored by
+            # the custom one — two different models.
+            from strider.thermo._param_context import param_context
+            with param_context(paramset):
+                struct_str, _, _ = fold_mfe(seq, 37.0, material, dangles=dangles)
+        else:
+            struct_str, _, _ = fold_mfe(seq, 37.0, material, dangles=dangles)
     elif isinstance(structure, str):
         struct_str = structure
     else:
@@ -120,8 +135,8 @@ def hairpin_thermo(
         raise ValueError("structure is not a single unbranched hairpin")
 
     # ΔG and ΔH from the same per-element walk → a consistent ΔS at T_ref.
-    dG37_1M = structure_free_energy(seq, struct_str, material)
-    dH = structure_enthalpy(seq, struct_str, material)
+    dG37_1M = structure_free_energy(seq, struct_str, material, paramset=paramset, dangles=dangles)
+    dH = structure_enthalpy(seq, struct_str, material, paramset=paramset, dangles=dangles)
 
     # Fold salt into the closed-state ΔG₃₇, then derive ΔS at T_ref.  The Tan-Chen
     # whole-helix model needs the stem length and is only fit for ≥6 bp; below that
@@ -169,10 +184,14 @@ def hairpin_tm(
     magnesium_M: float = 0.0,
     material: str = "dna",
     salt_model: str = "auto",
+    paramset=None,
+    dangles: int = 0,
 ) -> float:
-    """Melting temperature (°C) of the predicted hairpin. See :func:`hairpin_thermo`."""
+    """Melting temperature (°C) of the predicted hairpin. See :func:`hairpin_thermo`
+    (raises ``ValueError`` when the sequence does not fold into a hairpin)."""
     return hairpin_thermo(seq, sodium_M, magnesium_M, material,
-                          salt_model=salt_model).tm_celsius
+                          salt_model=salt_model, paramset=paramset,
+                          dangles=dangles).tm_celsius
 
 
 def fraction_folded(
@@ -182,12 +201,35 @@ def fraction_folded(
     magnesium_M: float = 0.0,
     material: str = "dna",
     salt_model: str = "auto",
+    paramset=None,
+    dangles: int = 0,
 ) -> float:
     """
     Two-state folded fraction at ``celsius`` — the quantity a beacon melt
     (fluorophore dequenching) actually traces out.
+
+    Sequences with no stable hairpin fold at all → their melt is a flat zero;
+    ``fraction_folded`` returns ``0.0`` for them (it used to raise ``ValueError``,
+    which made every non-folding primer crash melt-curve analysis).
+
+    Only the no-base-pairs case maps to zero.  Caller-mistake conditions
+    (unknown ``salt_model``, bad ``material``, degenerate ΔS, multiloop MFE)
+    still raise instead of being silently flattened.
     """
-    th = hairpin_thermo(seq, sodium_M, magnesium_M, material, salt_model=salt_model)
+    from strider.structure.mfe import fold_mfe
+
+    norm = seq.upper().replace("U", "T")
+    if paramset is not None:
+        from strider.thermo._param_context import param_context
+        with param_context(paramset):
+            struct_str, _, _ = fold_mfe(norm, 37.0, material, dangles=dangles)
+    else:
+        struct_str, _, _ = fold_mfe(norm, 37.0, material, dangles=dangles)
+    if "(" not in struct_str:
+        return 0.0  # no stable fold — flat melt curve
+    th = hairpin_thermo(seq, sodium_M, magnesium_M, material,
+                        salt_model=salt_model, paramset=paramset,
+                        dangles=dangles, structure=struct_str)
     T = celsius + 273.15
     dG_T = th.dH - T * th.dS / 1000.0           # ΔG(T) of the closed state
     R = 1.987e-3
