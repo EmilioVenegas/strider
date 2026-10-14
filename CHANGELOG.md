@@ -5,62 +5,468 @@ This file is generated from the git history by [git-cliff](https://git-cliff.org
 The format follows [Keep a Changelog](https://keepachangelog.com) and the project
 uses [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [1.3.0] - 2026-10-14
 
-### Behavior Changes
+### Bug Fixes
 
-- **thermo:** `fraction_folded` returns 0.0 for non-folding sequences and no
-  longer swallows caller mistakes
+- **hairpin:** Eliminate extreme Tms and reduce NA rate via multiloop splitting, dS threshold, and 25C fold
 
-    The blanket `except ValueError` collapsed every failure (bad
-    ``salt_model`` choice, degenerate entropy, multiloop MFE) into a silent
-    ``0.0``.  The zero case is now decided from the MFE structure itself:
-    only a sequence with no base pairs in its MFE maps to ``0.0``; everything
-    else still raises.  This is a behavior change for
-    ``fraction_folded`` under invalid arguments.
+    Three fixes for hairpin_thermo:
 
-- **thermo:** `hairpin_thermo` accepts custom parameter sets, and the dimer
-  path gains a ``dangles`` flag
+    1. dS threshold: raise the degenerate-entropy guard from exact-zero to
+       |dS| < 0.5 cal/mol/K, and add a Tm > 200C ceiling. Both return None
+       (via ValueError) instead of absurd values like 528C. The two-state
+       model is not applicable when dS is near-zero or Tm exceeds 200C.
 
-    ``hairpin_thermo(paramset=...)`` now folds with the same parameter set it
-    scores with (previously the native set picked the structure while the
-    custom set scored it) and both ``hairpin_thermo`` and
-    ``fraction_folded`` accept a paramset name as well as an instance.
-    ``dimer_thermo`` / ``dimer_thermo_subopt`` / ``dimer_tm`` take
-    ``dangles=0|2`` matching the hairpin flag: each duplex terminus gathers
-    the negative dangling-end stacks adjacent to its outermost pair.
-    Note the changing default for ``_sum_dimer_elements``: exterior flank
-    contributions are now gated by the flag (``0`` = off), where they were
-    previously always included, so dimer ΔG/Tm for structures with dangling
-    flanks shift vs earlier releases.
-    Separate latent fix: enthalpy walks no longer ingest ΔG-valued dangle
-    tables (the dangle parameter tables are ΔG-only; the ΔH path now always
-    excludes them).
+    2. Multiloop splitting: when parse_hairpin_pairs returns None (multiloop),
+       try _split_stem_groups to decompose into individual stem-loops and
+       recurse on the most stable one. Mirrors the splitStemGroups algorithm
+       in Oligool's HairpinSVG.tsx. Recovers Tm for GC-rich primers whose
+       MFE is a multiloop but contain a valid hairpin stem.
 
-- **thermo:** ``dangles`` is scoped to MFE/suboptimal results
+    3. Fold at 25C via ThermoEngine: replace fold_mfe(seq, 37C, ...) with
+       ThermoEngine(celsius=25.0) for the internal MFE. At 37C, marginally
+       stable hairpins (Tm 25-37C) unfold and are missed, yielding NA Tm.
+       ThermoEngine applies dG(T) = dH - T*dS, which at 25C finds weak
+       structures. Salt is NOT passed (folds at 1M Na+ reference) so the
+       MFE structure is salt-independent, as the Owczarzy model requires.
 
-    ``ThermoEngine(dangles=...)`` no longer feeds the partition-function path:
-    the ensemble, ensemble-defect, differentiable and concentration-solving
-    code do not implement dangle semantics, and carrying the flag into the
-    pfunc cache key implied an effect that does not exist.  ``0`` vs ``2``
-    therefore changes ``mfe``/``subopt`` results only; ``pfunc`` is
-    bit-identical across flag states.
+    Results on the 10k oligo parity table, recomputed at the committed
+    states (an earlier draft of this message quoted figures measured on a
+    development tree that do not reproduce from any committed state, and
+    have been corrected here; the follow-up _split_stem_groups end-position
+    fix moves the numbers slightly further in the same direction):
+    - Extreme Tms (>200C): eliminated (was 2 sequences, max 298C)
+    - Mathews NA rate: 51.8% -> 27.3% (25.7% after the follow-up fix)
+    - SantaLucia NA rate: 71.0% -> 56.4% (56.2% after the follow-up fix)
+    - Mathews mean abs diff vs IDT: 7.40 -> 7.17C (7.28C after the fix)
+    - All 660 strider tests pass (excluding pre-existing dimer failure)
 
-- **structure:** exterior dangle rule no longer drops a valid strand-start
-  flank in ``fold_complex``/``fold_mfe``
+- **hairpin:** Address review issues - dead import, constants, tests, split bug
 
-    The 5' branch of the exterior dangle walk tested
-    ``(ko - 1) not in nicks`` in addition to the required contiguity check
-    (``ko not in nicks``), discarding a legitimate 5' dangle whenever the
-    flanking base was the first base of a strand.
+    Fixes issues a reviewer would catch on the previous commit (70ec8e9):
+
+    1. Dead import: remove unused fold_mfe import from hairpin_thermo
+       (ThermoEngine handles folding now).
+
+    2. fraction_folded consistency: update fraction_folded to use
+       ThermoEngine at 25C (FOLD_CELSIUS) instead of fold_mfe at 37C,
+       so both functions find the same MFE structure.
+
+    3. Redundant exception: except (ValueError, Exception) -> except Exception.
+
+    4. Named constants: replace magic numbers 0.0005 and 200.0 with
+       MIN_DS_CAL (0.5 cal/mol/K) and MAX_TM_CELSIUS (200C), with
+       physical motivation documented. Add FOLD_CELSIUS (25C) constant.
+
+    5. _split_stem_groups bug: end position used g[-1][1] (innermost
+       pair closing) instead of g[0][1] (outermost pair closing),
+       truncating sub-structures. Fixed.
+
+    6. Tests: add 7 new tests covering dS threshold, Tm ceiling, 25C
+       fold behavior, multiloop splitting correctness, and edge cases
+       for _split_stem_groups (single hairpin, unbalanced, no pairs).
+
+    All 667 tests pass (was 660 + 7 new).
+
+- **hairpin:** Address PR#13 review notes
+
+    1. except Exception: continue -> except ValueError: continue in the
+       multiloop stem-loop candidate loop.  A bare Exception catch masks
+       real errors (e.g. ImportError, TypeError) behind 'no valid stem-loop
+       found in multiloop'.  ValueError is what hairpin_thermo raises for
+       degenerate dS, extreme Tm, or non-hairpin structures.
+
+    2. test_degenerate_ds_raises now tests behavior: patches the energy
+       walkers to force near-zero dS and asserts ValueError is raised.
+       Previously it just asserted MIN_DS_CAL == 0.5 and MAX_TM_CELSIUS ==
+       200.0, restating the constants rather than testing the guard.
+
+    3. Expose FOLD_CELSIUS as a named fold_celsius parameter on
+       hairpin_thermo / hairpin_tm / fraction_folded (default 25.0C).
+       The 25C fold matches IDT OligoAnalyzer's reporting temperature.
+       Pass fold_celsius=37.0 to restore the pre-25C behavior.
+
+- **hairpin:** Require a minimum 3 bp stem for a two-state hairpin Tm
+
+    Per review on #14: the worst outliers trace to 2 bp stems such as
+    .......((......)).......  A 2 bp helix is marginally stable and its dS is
+    dominated by loop initiation, so the two-state Tm = dH/dS is numerically
+    unstable there.  Reject structures whose stem has fewer than MIN_STEM_BP
+    (3) pairs, in the direct path and in multiloop stem-loop candidates
+    (short candidates are skipped by the existing except ValueError).
+
+    fraction_folded maps a below-minimum stem to 0.0 (a marginal 2 bp stem
+    is not a stable hairpin, the melt is flat), mirroring the no-base-pairs
+    case; the precheck counts brackets so a multiloop whose every stem is
+    short also flattens instead of crashing melt-curve analysis.
+
+    Measured on the 10k oligo parity set (mathews2004 + dangles=2):
+    hairpin Tm NA 25.7% -> 44.1% (SL 56.2% -> 61.2%), mean |dTm| vs IDT
+    7.28 -> 7.34 C (SL 11.97 -> 11.52).  The 2 bp population (1860 of 7431
+    successes, median Tm 30.6 C) is removed at the source; near-degenerate
+    |dS| < 0.5 was already eliminated by the existing guards on this set.
+
+- **params:** Correct Mathews 2004 stack/bulge/interior key conventions + dH interior tables
+
+    - convert_stack: the .par matrix's column pair is written in reversed
+      orientation (from the j-side); keys must read outer[0] + inner[1] +
+      inner[0] + outer[1].  Verified against RNA.eval_structure_verbose:
+      GCGC/CGCG = -2.2, CCGG/GGCC = -1.8, AATT/TTAA = -1.0, ATAT = -0.9,
+      TATA = -0.6.
+    - convert_bulge_size: drop the leading 0.0 'sentinel' — index 0 IS the
+      1-nt bulge entry (2.9).  The bug made single-base bulges free and
+      shifted every larger bulge by one size — the root cause of bogus
+      single-bulge hairpin structures the DP over-stabilized.
+    - convert_interior_size: same off-by-one fix (index i = VR internal[i+1]);
+      size-table sentinels are now 30.0 (INF), matching the native set.
+    - generate_paramset: emit the previously computed-but-dropped interior_1_1
+      / interior_2_2 dH tables, so structure_enthalpy no longer silently mixes
+      native dG values into the enthalpy walk.
+    - verification: add bulge-containing hairpins to the test set — the old
+      straight-stem-only set passed with the bug present.  7/7 structures now
+      match ViennaRNA eval_structure exactly at dangles=0.
+
+- **paramset,dangles:** Review round for #13 - scope, dimer flag, tests, notices
+
+    * fraction_folded: zero case derives from MFE pairs; caller mistakes raise
+      again (bad salt model, degenerate entropy, multiloop MFE) instead of being
+      flattened to 0.0 by the blanket ValueError catch.
+    * dangles scope: engine trim to MFE/suboptimal - pfunc/ensemble/defect/
+      differentiable/equilibrium explicitly ignore the flag; dropped from the
+      pfunc cache key. Naming note at the API surface for the dangles=2 vs VR
+      dangles=2 divergence (best single negative dangle per exterior stem).
+    * dimer path: dimer_thermo/_subopt/_tm accept dangles=0|2 threaded into
+      _sum_dimer_elements (each terminus gathers adjacent negative dangle
+      stacks). Also a latent-domain fix: the enthalpy walk no longer ingests
+      DG-valued dangle tables (dangle tables are DG-only).
+    * ext_e 5' branch: drop the redundant (ko - 1) not in nicks check that
+      discarded valid strand-start 5' dangles in fold_mfe/fold_complex.
+    * notices: value-level confirmation of the dna_mathews2004.par identity
+      (ATAT -0.9 vs -0.8, GT/CG +1.2 vs +1.3 markers vs the 1999 par file).
+    * _resolve_name: documented the shared-instance read-only contract (no
+      in-place writes exist in the tree today).
+    * tests/test_mathews2004.py (12 tests): pinned mathews2004-dna folded
+      energies and table markers, 42-case dangles=0 bit-identity grid, name-path
+      regression, fraction_folded zero + error propagation, dimer dangles flag,
+      pfunc/cache-key scoping, strand-start flank regression pin.
+    * changelog: behavior-changes and documentation entries for the above.
+
+- **params:** Resolve DEF hairpin mismatch entries to match ViennaRNA
+
+    ViennaRNA marks 8 hairpin-mismatch dG entries as DEF but resolves them to
+    -0.50 kcal/mol at runtime. strider was treating DEF as 0.0, causing dG
+    mismatches of 0.50 kcal/mol on any hairpin with those mismatch
+    combinations (verified against eval_structure on 10k oligos).
+
+    The dH values for these entries ARE defined in dna_mathews2004.par but
+    were also discarded. Now always stored when defined (96 entries, up
+    from 73).
+
+    Hardcode the 8 known DEF dG entries to -0.50 via a lookup set, since the
+    .par file does not encode the default and ViennaRNA resolves it
+    internally. All other DEF entries remain 0.0 (the correct default for
+    non-WC pair types).
+
+    Regenerated mathews2004-dna.json passes all verification checks against
+    ViennaRNA eval_structure at dangles=0.
+
+- **hairpin:** Eliminate extreme Tms and reduce NA rate via multiloop splitting, dS threshold, and 25C fold
+
+    Three fixes for hairpin_thermo:
+
+    1. dS threshold: raise the degenerate-entropy guard from exact-zero to
+       |dS| < 0.5 cal/mol/K, and add a Tm > 200C ceiling. Both return None
+       (via ValueError) instead of absurd values like 528C. The two-state
+       model is not applicable when dS is near-zero or Tm exceeds 200C.
+
+    2. Multiloop splitting: when parse_hairpin_pairs returns None (multiloop),
+       try _split_stem_groups to decompose into individual stem-loops and
+       recurse on the most stable one. Mirrors the splitStemGroups algorithm
+       in Oligool's HairpinSVG.tsx. Recovers Tm for GC-rich primers whose
+       MFE is a multiloop but contain a valid hairpin stem.
+
+    3. Fold at 25C via ThermoEngine: replace fold_mfe(seq, 37C, ...) with
+       ThermoEngine(celsius=25.0) for the internal MFE. At 37C, marginally
+       stable hairpins (Tm 25-37C) unfold and are missed, yielding NA Tm.
+       ThermoEngine applies dG(T) = dH - T*dS, which at 25C finds weak
+       structures. Salt is NOT passed (folds at 1M Na+ reference) so the
+       MFE structure is salt-independent, as the Owczarzy model requires.
+
+    Results on the 10k oligo parity table, recomputed at the committed
+    states (an earlier draft of this message quoted figures measured on a
+    development tree that do not reproduce from any committed state, and
+    have been corrected here; the follow-up _split_stem_groups end-position
+    fix moves the numbers slightly further in the same direction):
+    - Extreme Tms (>200C): eliminated (was 2 sequences, max 298C)
+    - Mathews NA rate: 51.8% -> 27.3% (25.7% after the follow-up fix)
+    - SantaLucia NA rate: 71.0% -> 56.4% (56.2% after the follow-up fix)
+    - Mathews mean abs diff vs IDT: 7.40 -> 7.17C (7.28C after the fix)
+    - All 660 strider tests pass (excluding pre-existing dimer failure)
+
+- **hairpin:** Address review issues - dead import, constants, tests, split bug
+
+    Fixes issues a reviewer would catch on the previous commit (70ec8e9):
+
+    1. Dead import: remove unused fold_mfe import from hairpin_thermo
+       (ThermoEngine handles folding now).
+
+    2. fraction_folded consistency: update fraction_folded to use
+       ThermoEngine at 25C (FOLD_CELSIUS) instead of fold_mfe at 37C,
+       so both functions find the same MFE structure.
+
+    3. Redundant exception: except (ValueError, Exception) -> except Exception.
+
+    4. Named constants: replace magic numbers 0.0005 and 200.0 with
+       MIN_DS_CAL (0.5 cal/mol/K) and MAX_TM_CELSIUS (200C), with
+       physical motivation documented. Add FOLD_CELSIUS (25C) constant.
+
+    5. _split_stem_groups bug: end position used g[-1][1] (innermost
+       pair closing) instead of g[0][1] (outermost pair closing),
+       truncating sub-structures. Fixed.
+
+    6. Tests: add 7 new tests covering dS threshold, Tm ceiling, 25C
+       fold behavior, multiloop splitting correctness, and edge cases
+       for _split_stem_groups (single hairpin, unbalanced, no pairs).
+
+    All 667 tests pass (was 660 + 7 new).
+
+- **hairpin:** Address PR#13 review notes
+
+    1. except Exception: continue -> except ValueError: continue in the
+       multiloop stem-loop candidate loop.  A bare Exception catch masks
+       real errors (e.g. ImportError, TypeError) behind 'no valid stem-loop
+       found in multiloop'.  ValueError is what hairpin_thermo raises for
+       degenerate dS, extreme Tm, or non-hairpin structures.
+
+    2. test_degenerate_ds_raises now tests behavior: patches the energy
+       walkers to force near-zero dS and asserts ValueError is raised.
+       Previously it just asserted MIN_DS_CAL == 0.5 and MAX_TM_CELSIUS ==
+       200.0, restating the constants rather than testing the guard.
+
+    3. Expose FOLD_CELSIUS as a named fold_celsius parameter on
+       hairpin_thermo / hairpin_tm / fraction_folded (default 25.0C).
+       The 25C fold matches IDT OligoAnalyzer's reporting temperature.
+       Pass fold_celsius=37.0 to restore the pre-25C behavior.
+
+- **hairpin:** Require a minimum 3 bp stem for a two-state hairpin Tm
+
+    Per review on #14: the worst outliers trace to 2 bp stems such as
+    .......((......)).......  A 2 bp helix is marginally stable and its dS is
+    dominated by loop initiation, so the two-state Tm = dH/dS is numerically
+    unstable there.  Reject structures whose stem has fewer than MIN_STEM_BP
+    (3) pairs, in the direct path and in multiloop stem-loop candidates
+    (short candidates are skipped by the existing except ValueError).
+
+    fraction_folded maps a below-minimum stem to 0.0 (a marginal 2 bp stem
+    is not a stable hairpin, the melt is flat), mirroring the no-base-pairs
+    case; the precheck counts brackets so a multiloop whose every stem is
+    short also flattens instead of crashing melt-curve analysis.
+
+    Measured on the 10k oligo parity set (mathews2004 + dangles=2):
+    hairpin Tm NA 25.7% -> 44.1% (SL 56.2% -> 61.2%), mean |dTm| vs IDT
+    7.28 -> 7.34 C (SL 11.97 -> 11.52).  The 2 bp population (1860 of 7431
+    successes, median Tm 30.6 C) is removed at the source; near-degenerate
+    |dS| < 0.5 was already eliminated by the existing guards on this set.
+
 
 ### Documentation
 
-- **notices:** value-level confirmation for the `dna_mathews2004.par`
-  provenance claim (the 1999 and 2004 Vienna DNA sets differ: `ATAT` is
-  -0.8/-0.9 and `GT/CG` is +1.3/+1.2 respectively; the JSON carries the
-  2004-file markers). Citation: Mathews 1999 JMB 288:911-940 lineage plus
-  NNDB Turner & Mathews 2010.
+- **notices:** Record dna_mathews2004.par provenance for the Mathews 2004 paramset
+
+    scripts/generate_mathews2004_params.py uses ViennaRNA's distributed
+    dna_mathews2004.par as a development-time extraction input to produce
+    strider/thermo/parameters/mathews2004-dna.json; the transcribed values are
+    primary literals of Mathews et al. 1999 (JMB 288:911-940) — physical
+    measurements, not copyrightable expression — and the JSON is self-contained
+    static data.  Neither the .par file nor ViennaRNA is redistributed or
+    required at runtime.
+
+
+### Features
+
+- **thermo:** Optional Rust accelerator (strider._native) for duplex Tm and salt kernels (#11)
+
+    Adds an optional PyO3 extension, strider._native, re-implementing the duplex/Tm
+    walk of strider.thermo.nn_dna and the scalar salt corrections of
+    strider.thermo.salt in Rust. The pure-Python definitions remain in place as a
+    bit-compatible fallback when the extension is unavailable, and as the oracle for
+    the parity suite.
+
+    Also hoists the per-call `from ... import ...` statements out of the ensemble DP
+    inner loops and fast-paths the param_context lookups.
+
+    Parity is enforced by a dedicated CI job that builds the extension and runs
+    tests/test_native_parity.py (10k-sequence fuzz, <=1e-9 tolerance) rather than
+    skipping it, so the bit-compatibility claim is checked on every PR.
+
+- **dimer:** Native Rust port of the dimer MFE candidate DP (#12)
+
+    Ports strider.thermo.dimer_thermo._dimer_mfe_candidates (the inter-strand DP
+    behind dimer_thermo / dimer_thermo_subopt) to Rust inside strider._native: DP
+    fill, dangling ends, terminal penalties and the full Mathews-Turner interior
+    energy model including the exact 1x1/1x2/2x2 tables.
+
+    Tables are generated from strider.thermo.parameters_dna by
+    native/codegen_tables.py rather than hand-copied, packed two bits per base and
+    binary-searched from static arrays. A staleness test regenerates and compares
+    byte for byte.
+
+    The native DP is used only for DNA with no parameter override and pure ACGT
+    input; RNA, param_context overrides, custom ParameterSets, degenerate bases and
+    a missing extension all keep the Python implementation, which also remains the
+    parity oracle.
+
+    The extension CI job now runs both parity suites, so the DP fuzz, the fallback
+    guards and the codegen staleness check are enforced on every PR.
+
+- **thermo:** Mathews 2004 parameter set + paramset plumbing + dangles=2 exterior stacks (#13)
+
+    * fix(params): correct Mathews 2004 stack/bulge/interior key conventions + dH interior tables
+
+    - convert_stack: the .par matrix's column pair is written in reversed
+      orientation (from the j-side); keys must read outer[0] + inner[1] +
+      inner[0] + outer[1].  Verified against RNA.eval_structure_verbose:
+      GCGC/CGCG = -2.2, CCGG/GGCC = -1.8, AATT/TTAA = -1.0, ATAT = -0.9,
+      TATA = -0.6.
+    - convert_bulge_size: drop the leading 0.0 'sentinel' — index 0 IS the
+      1-nt bulge entry (2.9).  The bug made single-base bulges free and
+      shifted every larger bulge by one size — the root cause of bogus
+      single-bulge hairpin structures the DP over-stabilized.
+    - convert_interior_size: same off-by-one fix (index i = VR internal[i+1]);
+      size-table sentinels are now 30.0 (INF), matching the native set.
+    - generate_paramset: emit the previously computed-but-dropped interior_1_1
+      / interior_2_2 dH tables, so structure_enthalpy no longer silently mixes
+      native dG values into the enthalpy walk.
+    - verification: add bulge-containing hairpins to the test set — the old
+      straight-stem-only set passed with the bug present.  7/7 structures now
+      match ViennaRNA eval_structure exactly at dangles=0.
+
+    * feat(thermo,structure): paramset threading, name resolution, dangles=2 exterior stacks
+
+    - dimer_thermo / dimer_thermo_subopt / dimer_tm accept paramset (instance
+      or name) and use it to predict AND score the inter-strand helix,
+      matching the hairpin API.
+    - param_context + structure_* walkers resolve parameter-set NAMES via a
+      memoized loader instead of crashing on str ('str' has no .dG).
+    - hairpin_thermo folds with the same paramset it scores with
+      (param_context wrapping fold_mfe); fraction_folded returns 0.0 for
+      non-folding sequences instead of raising ValueError.
+    - NEW: dangles option (default 0, bit-identical energies) on fold_mfe /
+      subopt_structures / fold_complex / ThermoEngine(dangles=...) — exterior
+      dangling-end stacks at W-matrix stem placements: best negative single
+      dangle per exterior stem.  Verified against ViennaRNA eval on a 25-case
+      single-stem flank grid: single-flank cases match exactly, two-flank
+      cases track the better of the two flanks; 38/42 end-to-end sequences
+      within 0.4 kcal/mol of VR(dangles=2) (remaining are G.T-wobble stems).
+    - hairpin dG/dH structure walk applies the same exterior-tail dangle, so
+      hairpin_thermo stays energy-consistent with the dangle-aware MFE.
+
+    * docs(notices): record dna_mathews2004.par provenance for the Mathews 2004 paramset
+
+    scripts/generate_mathews2004_params.py uses ViennaRNA's distributed
+    dna_mathews2004.par as a development-time extraction input to produce
+    strider/thermo/parameters/mathews2004-dna.json; the transcribed values are
+    primary literals of Mathews et al. 1999 (JMB 288:911-940) — physical
+    measurements, not copyrightable expression — and the JSON is self-contained
+    static data.  Neither the .par file nor ViennaRNA is redistributed or
+    required at runtime.
+
+    * fix(paramset,dangles): review round for #13 - scope, dimer flag, tests, notices
+
+    * fraction_folded: zero case derives from MFE pairs; caller mistakes raise
+      again (bad salt model, degenerate entropy, multiloop MFE) instead of being
+      flattened to 0.0 by the blanket ValueError catch.
+    * dangles scope: engine trim to MFE/suboptimal - pfunc/ensemble/defect/
+      differentiable/equilibrium explicitly ignore the flag; dropped from the
+      pfunc cache key. Naming note at the API surface for the dangles=2 vs VR
+      dangles=2 divergence (best single negative dangle per exterior stem).
+    * dimer path: dimer_thermo/_subopt/_tm accept dangles=0|2 threaded into
+      _sum_dimer_elements (each terminus gathers adjacent negative dangle
+      stacks). Also a latent-domain fix: the enthalpy walk no longer ingests
+      DG-valued dangle tables (dangle tables are DG-only).
+    * ext_e 5' branch: drop the redundant (ko - 1) not in nicks check that
+      discarded valid strand-start 5' dangles in fold_mfe/fold_complex.
+    * notices: value-level confirmation of the dna_mathews2004.par identity
+      (ATAT -0.9 vs -0.8, GT/CG +1.2 vs +1.3 markers vs the 1999 par file).
+    * _resolve_name: documented the shared-instance read-only contract (no
+      in-place writes exist in the tree today).
+    * tests/test_mathews2004.py (12 tests): pinned mathews2004-dna folded
+      energies and table markers, 42-case dangles=0 bit-identity grid, name-path
+      regression, fraction_folded zero + error propagation, dimer dangles flag,
+      pfunc/cache-key scoping, strand-start flank regression pin.
+    * changelog: behavior-changes and documentation entries for the above.
+
+    * fix(params): resolve DEF hairpin mismatch entries to match ViennaRNA
+
+    ViennaRNA marks 8 hairpin-mismatch dG entries as DEF but resolves them to
+    -0.50 kcal/mol at runtime. strider was treating DEF as 0.0, causing dG
+    mismatches of 0.50 kcal/mol on any hairpin with those mismatch
+    combinations (verified against eval_structure on 10k oligos).
+
+    The dH values for these entries ARE defined in dna_mathews2004.par but
+    were also discarded. Now always stored when defined (96 entries, up
+    from 73).
+
+    Hardcode the 8 known DEF dG entries to -0.50 via a lookup set, since the
+    .par file does not encode the default and ViennaRNA resolves it
+    internally. All other DEF entries remain 0.0 (the correct default for
+    non-WC pair types).
+
+    Regenerated mathews2004-dna.json passes all verification checks against
+    ViennaRNA eval_structure at dangles=0.
+
+    * perf(ensemble): add pair_probs flag to skip outside recurrence
+
+    ensemble_dg and multistrand_pairs now accept pair_probs=True (default,
+    preserves existing behavior). When False, skip _external_Q_nodangle and
+    _pair_probs_outside and return a zero matrix; dG is byte-identical because
+    the inside partition (_fill_dp_nicks + _apply_coaxial_external) fully
+    determines Q[0][n-1] before the outside pass runs, and the outside pass
+    writes only to local arrays.
+
+    Thread the flag through ThermoEngine.pfunc -> _pfunc_dispatch ->
+    _pfunc_native -> _pfunc_native_inner. Use a distinct 'pfunc_dg' cache-key
+    op for the no-probs variant so cached results never cross-contaminate,
+    and extend the dangles-exclusion check to cover it.
+
+- **thermo,structure:** Paramset threading, name resolution, dangles=2 exterior stacks
+
+    - dimer_thermo / dimer_thermo_subopt / dimer_tm accept paramset (instance
+      or name) and use it to predict AND score the inter-strand helix,
+      matching the hairpin API.
+    - param_context + structure_* walkers resolve parameter-set NAMES via a
+      memoized loader instead of crashing on str ('str' has no .dG).
+    - hairpin_thermo folds with the same paramset it scores with
+      (param_context wrapping fold_mfe); fraction_folded returns 0.0 for
+      non-folding sequences instead of raising ValueError.
+    - NEW: dangles option (default 0, bit-identical energies) on fold_mfe /
+      subopt_structures / fold_complex / ThermoEngine(dangles=...) — exterior
+      dangling-end stacks at W-matrix stem placements: best negative single
+      dangle per exterior stem.  Verified against ViennaRNA eval on a 25-case
+      single-stem flank grid: single-flank cases match exactly, two-flank
+      cases track the better of the two flanks; 38/42 end-to-end sequences
+      within 0.4 kcal/mol of VR(dangles=2) (remaining are G.T-wobble stems).
+    - hairpin dG/dH structure walk applies the same exterior-tail dangle, so
+      hairpin_thermo stays energy-consistent with the dangle-aware MFE.
+
+
+### Performance
+
+- **ensemble:** Add pair_probs flag to skip outside recurrence
+
+    ensemble_dg and multistrand_pairs now accept pair_probs=True (default,
+    preserves existing behavior). When False, skip _external_Q_nodangle and
+    _pair_probs_outside and return a zero matrix; dG is byte-identical because
+    the inside partition (_fill_dp_nicks + _apply_coaxial_external) fully
+    determines Q[0][n-1] before the outside pass runs, and the outside pass
+    writes only to local arrays.
+
+    Thread the flag through ThermoEngine.pfunc -> _pfunc_dispatch ->
+    _pfunc_native -> _pfunc_native_inner. Use a distinct 'pfunc_dg' cache-key
+    op for the no-probs variant so cached results never cross-contaminate,
+    and extend the dangles-exclusion check to cover it.
+
 
 ## [1.2.1] - 2026-07-28
 
